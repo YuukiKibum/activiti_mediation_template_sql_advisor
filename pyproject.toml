@@ -1,0 +1,17 @@
+[project]
+name = "activiti-mediation-template-sql-advisor"
+version = "0.1.0"
+description = "AI-assisted SQL advisor for Activiti mediation template configuration"
+readme = "README.md"
+authors = [
+    { name = "YuukiKibum", email = "yuukikibum@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+activiti-mediation-template-sql-advisor = "activiti_mediation_template_sql_advisor.main:main"
+
+[build-system]
+requires = ["uv_build>=0.11.16,<0.12.0"]
+build-backend = "uv_build"
