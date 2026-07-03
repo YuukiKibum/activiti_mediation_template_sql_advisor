@@ -7,7 +7,17 @@ authors = [
     { name = "YuukiKibum", email = "yuukikibum@gmail.com" }
 ]
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "langchain>=1.3.11",
+    "langchain-openai>=1.3.3",
+    "langgraph>=1.2.7",
+    "oracledb>=4.0.1",
+    "pinecone>=9.1.0",
+    "pydantic>=2.13.4",
+    "python-dotenv>=1.2.2",
+    "pyyaml>=6.0.3",
+    "rich>=15.0.0",
+]
 
 [project.scripts]
 activiti-mediation-template-sql-advisor = "activiti_mediation_template_sql_advisor.main:main"
