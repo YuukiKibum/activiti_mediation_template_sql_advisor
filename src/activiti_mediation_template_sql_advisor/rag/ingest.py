@@ -21,8 +21,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 DEFAULT_DOCS_DIR = PROJECT_ROOT / "data" / "rag_documents"
 
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
 PINECONE_NAMESPACE = os.getenv("PINECONE_NAMESPACE", "activiti-mediation-template-docs")
+
+if not PINECONE_API_KEY:
+    raise RuntimeError("PINECONE_API_KEY is not configured in .env")
 
 if not PINECONE_INDEX_NAME:
     raise RuntimeError("PINECONE_INDEX_NAME is not configured in .env")
@@ -212,6 +216,37 @@ def split_documents(documents: List[Document]) -> List[Document]:
 
     return chunks
 
+def delete_existing_vectors_for_documents(documents: List[Document]) -> None:
+    """
+    Deletes existing Pinecone vectors for the same source files before re-ingestion.
+
+    This avoids duplicate/stale chunks when the same document is ingested again.
+    """
+    source_files = sorted(
+        {
+            str(doc.metadata.get("source_file"))
+            for doc in documents
+            if doc.metadata.get("source_file")
+        }
+    )
+
+    if not source_files:
+        print("No source_file metadata found. Skipping Pinecone cleanup.")
+        return
+
+    print("PINECONE CLEANUP PHASE")
+
+    for source_file in source_files:
+        print(f"Deleting existing vectors for source_file: {source_file}")
+
+        vectorstore.delete(
+            filter={
+                "source_file": {
+                    "$eq": source_file,
+                }
+            }
+        )
+
 
 async def index_documents_async(
     documents: List[Document],
@@ -293,6 +328,8 @@ async def main() -> None:
     if not all_docs:
         print("No supported documents found. Nothing to ingest.")
         return
+    
+    delete_existing_vectors_for_documents(all_docs)
 
     chunks = split_documents(all_docs)
 
