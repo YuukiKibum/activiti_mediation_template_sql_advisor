@@ -54,3 +54,12 @@ data/generated/
 *.key
 wallet/
 Wallet_*/
+
+# RAG source documents - internal/confidential
+data/rag_documents/
+
+# Local/generated data
+data/raw/
+data/generated/
+data/rag_documents/
+*.zip
