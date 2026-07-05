@@ -15,6 +15,12 @@ from activiti_mediation_template_sql_advisor.graph.nodes.rag_retrieval import (
 from activiti_mediation_template_sql_advisor.graph.nodes.sql_generation import (
     sql_generation_node,
 )
+from activiti_mediation_template_sql_advisor.graph.nodes.template_resolution import (
+    template_resolution_node,
+)
+from activiti_mediation_template_sql_advisor.graph.nodes.expression_compilation import (
+    expression_compilation_node,
+)
 from activiti_mediation_template_sql_advisor.graph.state import (
     AdvisorState,
     create_initial_state,
@@ -27,6 +33,7 @@ def build_advisor_graph():
 
     Flow:
         planner
+          -> template_resolution
           -> rag_retrieval
           -> oracle_inspection
           -> sql_generation
@@ -35,19 +42,23 @@ def build_advisor_graph():
     graph = StateGraph(AdvisorState)
 
     graph.add_node("planner", planner_node)
+    graph.add_node("template_resolution", template_resolution_node)
     graph.add_node("rag_retrieval", rag_retrieval_node)
     graph.add_node("oracle_inspection", oracle_inspection_node)
     graph.add_node("sql_generation", sql_generation_node)
     graph.add_node("final_response", final_response_node)
+    graph.add_node("expression_compilation", expression_compilation_node)
 
     graph.add_edge(START, "planner")
-    graph.add_edge("planner", "rag_retrieval")
-    graph.add_edge("rag_retrieval", "oracle_inspection")
+    graph.add_edge("planner", "template_resolution")
+    graph.add_edge("template_resolution", "rag_retrieval")
+    graph.add_edge("rag_retrieval", "expression_compilation")
+    graph.add_edge("expression_compilation", "oracle_inspection")
     graph.add_edge("oracle_inspection", "sql_generation")
     graph.add_edge("sql_generation", "final_response")
     graph.add_edge("final_response", END)
-
-    return graph.compile()
+    app = graph.compile()
+    return app
 
 
 async def run_advisor(user_requirement: str) -> AdvisorState:
@@ -73,7 +84,10 @@ async def main() -> None:
     Run with:
         uv run python -m activiti_mediation_template_sql_advisor.graph.builder
     """
-    requirement = "Rename poAttributes to poAttributeList for MT_ECM_PRE_BASEPLAN"
+    requirement = (
+        "For Prepaid Base Plan ECM request, rename existing attribute "
+        "poAttributes to poAttributeList."
+    )
 
     final_state = await run_advisor(requirement)
 

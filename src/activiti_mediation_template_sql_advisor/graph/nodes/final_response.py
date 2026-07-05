@@ -132,6 +132,17 @@ def final_response_node(state: AdvisorState) -> dict[str, Any]:
     sections.append(
         "\n".join(
             [
+                "## Expression Compilation",
+                f"- Did compile: `{state.get('expression_compilation_did_compile', False)}`",
+                f"- Confidence: `{state.get('expression_compilation_confidence', 0.0)}`",
+                f"- Reason: {state.get('expression_compilation_reason', '') or 'Not applicable'}",
+            ]
+        )
+    )
+
+    sections.append(
+        "\n".join(
+            [
                 "## Current Oracle Configuration",
                 _format_current_parameter_preview(state),
             ]

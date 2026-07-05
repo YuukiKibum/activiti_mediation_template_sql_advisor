@@ -13,6 +13,12 @@ OperationType = Literal[
     "unknown",
 ]
 
+TemplateResolutionMatchType = Literal[
+    "template_id_exact",
+    "alias_exact",
+    "alias_fuzzy",
+    "not_found",
+]
 
 class AdvisorState(TypedDict, total=False):
     """
@@ -55,6 +61,19 @@ class AdvisorState(TypedDict, total=False):
     new_attribute_value: str
     value_to_append: str
 
+    # Expression compilation details.
+    expression_compilation_did_compile: bool
+    expression_compilation_confidence: float
+    expression_compilation_reason: str
+    expression_compilation_warnings: list[str]
+
+    # Template registry resolution details.
+    template_external_system: str
+    template_resolution_matched_text: str
+    template_resolution_match_type: TemplateResolutionMatchType
+    template_resolution_score: float
+    template_resolution_reason: str
+
     # RAG information from Pinecone documentation retrieval.
     rag_query: str
     rag_context: list[dict[str, Any]]
@@ -93,6 +112,15 @@ def create_initial_state(user_requirement: str) -> AdvisorState:
         new_attribute_name="",
         new_attribute_value="",
         value_to_append="",
+        expression_compilation_did_compile=False,
+        expression_compilation_confidence=0.0,
+        expression_compilation_reason="",
+        expression_compilation_warnings=[],
+        template_external_system="",
+        template_resolution_matched_text="",
+        template_resolution_match_type="not_found",
+        template_resolution_score=0.0,
+        template_resolution_reason="",
         rag_query="",
         rag_context=[],
         template_exists=False,

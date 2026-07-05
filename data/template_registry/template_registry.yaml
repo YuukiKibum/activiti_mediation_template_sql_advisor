@@ -1,0 +1,214 @@
+version: 1
+
+description: >
+  Deterministic template registry for resolving business/product phrases
+  to ACT_MEDIATION_TEMPLATE.TEMPLATE_ID values.
+
+templates:
+  - template_id: PREPAID_OT_IN_MAPPING
+    external_system: IN
+    aliases: []
+
+  - template_id: PREPAID_PLAN_IN_MAPPING
+    external_system: IN
+    aliases: []
+
+  - template_id: PREPAID_PSM_PLAN_MT
+    external_system: PSM
+    aliases: []
+
+  - template_id: PREPAID_RCS_IN_MAPPING
+    external_system: IN
+    aliases: []
+
+  - template_id: PREPAID_IN_GROUP_OFFER_MT
+    external_system: IN
+    aliases:
+      - Prepaid IN Group Offer
+      - IN Group Offer
+      - Prepaid Group Offer IN
+
+  - template_id: PREPAID_IN_PDPFU_OT_C_M_MT
+    external_system: IN
+    aliases: []
+
+  - template_id: PREPAID_IN_PDPFU_OT_D_M_MT
+    external_system: IN
+    aliases: []
+
+  - template_id: BUNDLE_PREPAID_CC_BR_GROUP_PO
+    external_system: ECM
+    aliases: []
+
+  - template_id: BUNDLE_PREPAID_ECM_ATTRS_MT
+    external_system: ECM
+    aliases: []
+
+  - template_id: BUNDLE_PREPAID_ECM_MAIN_MT
+    external_system: ECM
+    aliases:
+      - Bundle Prepaid ECM
+      - Prepaid Bundle ECM
+
+  - template_id: BUNDLE_PREPAID_PSM_PLAN_MT
+    external_system: PSM
+    aliases:
+      - Bundle Prepaid PSM
+      - Prepaid Bundle PSM
+
+  - template_id: MT_COMS_PREPAID_PLAN
+    external_system: COMS
+    aliases:
+      - COMS Prepaid Plan
+      - Prepaid COMS Plan
+
+  - template_id: MT_ECM_PRE_BASEPLAN
+    external_system: ECM
+    aliases:
+      - Prepaid Base Plan ECM request
+      - Prepaid Base Plan ECM
+      - ECM Prepaid Base Plan
+      - Base Plan ECM
+      - CCM prepaid Base plan
+
+  - template_id: PREPAID_IN_PLAN_M_MT
+    external_system: IN
+    aliases:
+      - Prepaid IN Plan M
+      - IN Prepaid Plan M
+
+  - template_id: PREPAID_RC_IN_MAPPING
+    external_system: IN
+    aliases: []
+
+  - template_id: PREPAID_RTC_IN_MAPPING
+    external_system: IN
+    aliases: []
+
+  - template_id: PRE_APP_GENERAL_ECM_MT
+    external_system: ECM
+    aliases:
+      - Prepaid App General ECM
+      - General ECM Prepaid
+
+  - template_id: PRE_APP_GENERAL_OT_IN_MT
+    external_system: IN
+    aliases:
+      - Prepaid App General OT IN
+      - General OT IN Prepaid
+
+  - template_id: PRE_APP_GENERAL_RC_IN_MT
+    external_system: IN
+    aliases:
+      - Prepaid App General RC IN
+      - General RC IN Prepaid
+
+  - template_id: PREPAID_IN_PLAN_RB_MT
+    external_system: IN
+    aliases:
+      - Prepaid IN Plan RB
+      - IN Prepaid Plan RB
+
+  - template_id: PREPAID_OGR_TIBCO_IN_PDPROAM
+    external_system: TIBCO to IN
+    aliases:
+      - Prepaid OGR TIBCO IN
+      - TIBCO to IN Prepaid OGR
+
+  - template_id: MT_PREPAID_STK_UPD_PROD_STORE
+    external_system: SALES TOOL KIT
+    aliases:
+      - Prepaid STK Update Product Store
+      - STK Update Product Store
+      - Sales Tool Kit Update Product Store
+
+  - template_id: MT_RTF_BUNDLE_PREPAID_PLAN
+    external_system: RTF
+    aliases:
+      - RTF Bundle Prepaid Plan
+      - Bundle Prepaid Plan RTF
+
+  - template_id: MT_RTF_PREPAID_PLAN
+    external_system: RTF
+    aliases:
+      - RTF Prepaid Plan
+      - Prepaid Plan RTF
+
+  - template_id: MT_RTF_TC_PREP_PLAN
+    external_system: RTF
+    aliases:
+      - Prepaid Base Plan RTF request
+      - Prepaid Base Plan RTF template
+      - Prepaid Base Plan RTF
+      - Base Plan RTF
+      - RTF Base Plan
+      - RTF TC Prepaid Plan
+      - RTF TC Prep Plan
+      - Prepaid RTF TC Plan
+
+  - template_id: PREPAID_INM_PDPFU_OT_C_M_MT
+    external_system: IN
+    aliases: []
+
+  - template_id: PREPAID_INM_PDPFU_OT_D_M_MT
+    external_system: IN
+    aliases: []
+
+  - template_id: PREPAID_INM_PDPFU_RC_ANY_B_MT
+    external_system: IN
+    aliases: []
+
+  - template_id: PREPAID_INM_PDPFU_RC_DAY_M_MT
+    external_system: IN
+    aliases: []
+
+  - template_id: PREPAID_IN_PDPFU_RC_ANY_B_MT
+    external_system: IN
+    aliases: []
+
+  - template_id: PREPAID_IN_PDPFU_RC_ANY_M_MT
+    external_system: IN
+    aliases: []
+
+  - template_id: PREPAID_IN_PDPFU_RC_DAY_B_MT
+    external_system: IN
+    aliases: []
+
+  - template_id: PREPAID_IN_PDPFU_RC_DAY_M_MT
+    external_system: IN
+    aliases: []
+
+  - template_id: PREPAID_IN_PDPFU_RC_QOT_B_MT
+    external_system: IN
+    aliases: []
+
+  - template_id: PREPAID_IN_PDPRC_OT_C_M_MT
+    external_system: IN
+    aliases: []
+
+  - template_id: PREPAID_IN_PDPRC_RC_C_B_MT
+    external_system: IN
+    aliases: []
+
+  - template_id: PREPAID_IN_PDPRC_RC_C_M_MT
+    external_system: IN
+    aliases: []
+
+  - template_id: PREPAID_IN_PLAN_B_MT
+    external_system: IN
+    aliases:
+      - Prepaid IN Plan B
+      - IN Prepaid Plan B
+
+  - template_id: MT_PARKING_PREPAID
+    external_system: PARKING
+    aliases:
+      - Parking Prepaid
+      - Prepaid Parking
+
+  - template_id: MT_PREPAID_STK_NOTIFY_STORE
+    external_system: SALES TOOL KIT
+    aliases:
+      - Prepaid STK Notify Store
+      - STK Notify Store
+      - Sales Tool Kit Notify Store
