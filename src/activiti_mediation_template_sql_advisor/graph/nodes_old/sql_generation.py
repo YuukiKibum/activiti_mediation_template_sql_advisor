@@ -3,9 +3,6 @@ from __future__ import annotations
 from activiti_mediation_template_sql_advisor.graph.state import AdvisorState
 
 
-DRAFT_ADD_ATTRIBUTE_PARAM_ID = "00000"
-
-
 def _sql_literal(value: str) -> str:
     """
     Escape a Python string for use inside an Oracle SQL string literal.
@@ -17,7 +14,12 @@ def _to_clob_expression(value: str, chunk_size: int = 3000) -> str:
     """
     Convert text into a safe Oracle CLOB expression.
 
-    Splitting into TO_CLOB chunks avoids Oracle string literal length issues.
+    Why chunks?
+    Oracle string literals can hit length limits. Splitting into TO_CLOB chunks
+    is safer for long ATTRIBUTE_VALUE rollback SQL.
+
+    Example:
+        TO_CLOB('abc') || TO_CLOB('def')
     """
     value = value or ""
 
@@ -74,32 +76,6 @@ FROM ACT_MEDIATION_PARAMETER
 WHERE {where_clause};"""
 
 
-def _append_full_value(
-    *,
-    current_attribute_value: str,
-    append_fragment: str,
-) -> str:
-    """
-    Build full replacement ATTRIBUTE_VALUE for composite append.
-
-    This follows the project prompt:
-    - fetch current full ATTRIBUTE_VALUE first
-    - preserve it byte-for-byte
-    - append only the new key=value; segment
-    - update full ATTRIBUTE_VALUE, not blind SQL concat
-    """
-    current_attribute_value = current_attribute_value or ""
-    append_fragment = append_fragment or ""
-
-    if not current_attribute_value:
-        return append_fragment
-
-    if current_attribute_value.endswith(";") or append_fragment.startswith(";"):
-        return current_attribute_value + append_fragment
-
-    return current_attribute_value + ";" + append_fragment
-
-
 def _generate_append_sql(
     *,
     template_id: str,
@@ -114,27 +90,22 @@ def _generate_append_sql(
         param_id=param_id,
     )
 
-    full_new_value = _append_full_value(
-        current_attribute_value=current_attribute_value,
-        append_fragment=append_fragment,
-    )
-
-    full_new_value_expr = _to_clob_expression(full_new_value)
+    safe_append_fragment = _sql_literal(append_fragment)
     rollback_value_expr = _to_clob_expression(current_attribute_value)
 
-    recommended_sql = f"""-- Pre-check: current full composite ATTRIBUTE_VALUE
+    recommended_sql = f"""-- Pre-check: current attribute value
 {_generate_precheck_sql(template_id=template_id, attribute_name=attribute_name, param_id=param_id)}
 
--- Change: replace ATTRIBUTE_VALUE with full preserved value plus new segment
+-- Change: append fragment to ATTRIBUTE_VALUE
 UPDATE ACT_MEDIATION_PARAMETER
-SET ATTRIBUTE_VALUE = {full_new_value_expr},
+SET ATTRIBUTE_VALUE = ATTRIBUTE_VALUE || TO_CLOB('{safe_append_fragment}'),
     MODIFIED_USER_ID = 'AI_SQL_ADVISOR',
     MODIFIED_DATE = SYSTIMESTAMP
 WHERE {where_clause};
 
 COMMIT;"""
 
-    rollback_sql = f"""-- Rollback: restore exact previous ATTRIBUTE_VALUE captured by MCP
+    rollback_sql = f"""-- Rollback: restore previous ATTRIBUTE_VALUE captured by MCP
 UPDATE ACT_MEDIATION_PARAMETER
 SET ATTRIBUTE_VALUE = {rollback_value_expr},
     MODIFIED_USER_ID = 'AI_SQL_ADVISOR_ROLLBACK',
@@ -237,72 +208,6 @@ COMMIT;"""
     return recommended_sql, rollback_sql
 
 
-def _generate_add_attribute_draft_sql(
-    *,
-    template_id: str,
-    attribute_name: str,
-    compiled_rhs: str,
-) -> tuple[str, str]:
-    """
-    Generate draft INSERT SQL for add_attribute.
-
-    Important:
-    This uses PARAM_ID = 00000 only as a visible placeholder/default.
-    SQL generation will still return can_execute=False with a validation error.
-    """
-    safe_template_id = _sql_literal(template_id)
-    safe_attribute_name = _sql_literal(attribute_name)
-    attribute_value_expr = _to_clob_expression(compiled_rhs)
-
-    recommended_sql = f"""-- DRAFT ONLY / NOT EXECUTABLE WITHOUT PARAM_ID REVIEW
--- PARAM_ID is using placeholder/default value {DRAFT_ADD_ATTRIBUTE_PARAM_ID}.
--- Replace it with a real unused PARAM_ID from Oracle before execution.
-
--- Pre-check: confirm attribute does not already exist
-SELECT PARAM_ID, TEMPLATE_ID, ATTRIBUTE_NAME, ATTRIBUTE_VALUE
-FROM ACT_MEDIATION_PARAMETER
-WHERE TEMPLATE_ID = '{safe_template_id}'
-  AND ATTRIBUTE_NAME = '{safe_attribute_name}';
-
--- Draft insert
-INSERT INTO ACT_MEDIATION_PARAMETER
-    (
-        PARAM_ID,
-        TEMPLATE_ID,
-        ATTRIBUTE_NAME,
-        CREATED_USER_ID,
-        MODIFIED_USER_ID,
-        CREATED_DATE,
-        MODIFIED_DATE,
-        ATTRIBUTE_VALUE
-    )
-VALUES
-    (
-        {DRAFT_ADD_ATTRIBUTE_PARAM_ID},
-        '{safe_template_id}',
-        '{safe_attribute_name}',
-        'AI_SQL_ADVISOR',
-        'AI_SQL_ADVISOR',
-        SYSTIMESTAMP,
-        SYSTIMESTAMP,
-        {attribute_value_expr}
-    );
-
-COMMIT;"""
-
-    rollback_sql = f"""-- DRAFT rollback for placeholder/default PARAM_ID {DRAFT_ADD_ATTRIBUTE_PARAM_ID}
--- Review carefully before execution.
-
-DELETE FROM ACT_MEDIATION_PARAMETER
-WHERE PARAM_ID = {DRAFT_ADD_ATTRIBUTE_PARAM_ID}
-  AND TEMPLATE_ID = '{safe_template_id}'
-  AND ATTRIBUTE_NAME = '{safe_attribute_name}';
-
-COMMIT;"""
-
-    return recommended_sql, rollback_sql
-
-
 def sql_generation_node(state: AdvisorState) -> dict:
     plan = state.get("plan", {}) or {}
     template = state.get("template", {}) or {}
@@ -347,11 +252,6 @@ def sql_generation_node(state: AdvisorState) -> dict:
 
             if oracle.get("duplicate_append_key", False):
                 errors.append("Append SQL blocked because append key already exists.")
-
-            if not current_attribute_value:
-                warnings.append(
-                    "Current ATTRIBUTE_VALUE is empty. Append will generate a full value using only the new fragment."
-                )
 
             if not errors:
                 recommended_sql, rollback_sql = _generate_append_sql(
@@ -409,34 +309,10 @@ def sql_generation_node(state: AdvisorState) -> dict:
                 )
 
         elif not errors and operation_type == "add_attribute":
-            attribute_name = str(
-                plan.get("new_attribute_name")
-                or plan.get("attribute_name")
-                or ""
+            errors.append(
+                "Add attribute SQL is intentionally blocked until PARAM_ID/order/sequence "
+                "rules are defined safely."
             )
-            compiled_rhs = str(expression.get("compiled_rhs", "") or "")
-
-            if not attribute_name:
-                errors.append("Add SQL blocked because attribute_name is missing.")
-
-            if not compiled_rhs:
-                errors.append("Add SQL blocked because expression.compiled_rhs is missing.")
-
-            if oracle.get("exists", False):
-                errors.append("Add SQL blocked because target attribute already exists.")
-
-            if attribute_name and compiled_rhs and not oracle.get("exists", False):
-                recommended_sql, rollback_sql = _generate_add_attribute_draft_sql(
-                    template_id=template_id,
-                    attribute_name=attribute_name,
-                    compiled_rhs=compiled_rhs,
-                )
-
-                errors.append(
-                    "Add attribute SQL is generated as DRAFT ONLY with placeholder/default "
-                    f"PARAM_ID {DRAFT_ADD_ATTRIBUTE_PARAM_ID}. It is not executable until "
-                    "PARAM_ID is replaced with a real unused Oracle value."
-                )
 
         else:
             if not errors:

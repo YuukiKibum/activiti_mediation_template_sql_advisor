@@ -1,135 +1,174 @@
-from typing import Annotated, Any, Literal, TypedDict
+from __future__ import annotations
 
-from langchain_core.messages import AnyMessage
-
-from langgraph.graph.message import add_messages
+from typing import Any, Literal, TypedDict
 
 
 OperationType = Literal[
     "rename_attribute",
-    "append_attribute_value",
-    "update_attribute_value",
     "add_attribute",
+    "update_attribute_value",
+    "append_attribute_value",
+    "delete_attribute",
     "unknown",
 ]
 
-TemplateResolutionMatchType = Literal[
-    "template_id_exact",
-    "alias_exact",
-    "alias_fuzzy",
-    "not_found",
-]
+
+class RequestPlan(TypedDict, total=False):
+    """
+    Clean intent extracted from the user requirement.
+
+    This is intentionally expression-light.
+    No DSL syntax should be generated in the planner.
+    """
+
+    operation_type: OperationType
+
+    # Template / system targeting
+    template_phrase: str
+    external_system: str
+
+    # Existing/new attribute targeting
+    attribute_name: str
+    new_attribute_name: str
+
+    # Append-specific targeting
+    container_attribute_name: str
+    append_key: str
+
+    # Human-language RHS request only.
+    # Example:
+    # "dto variable sample"
+    # "if subscriberType is PREPAID show 1 else 0"
+    # "convert DTO field x to long"
+    rhs_request: str
+
+    confidence: float
+    reason: str
+
+
+class TemplateResolutionResult(TypedDict, total=False):
+    """
+    Result of resolving the template from the registry.
+    """
+
+    template_id: str
+    external_system: str
+
+    match_type: str
+    matched_text: str
+    score: float
+    reason: str
+
+    is_resolved: bool
+
+
+class ExpressionResult(TypedDict, total=False):
+    """
+    Result of DSL expression compilation.
+
+    This is the only place where compiled RHS lives.
+    """
+
+    did_compile: bool
+    is_supported: bool
+
+    selected_record_id: str
+    selected_evaluator: str
+
+    # RHS only. Never SQL. Never TO_CLOB.
+    compiled_rhs: str
+
+    # For append operation only.
+    # Example:
+    # append_key = "CustomerType"
+    # compiled_rhs = "subscriberType#PREPAID|1,ELSE|0"
+    # append_fragment = "CustomerType=subscriberType#PREPAID|1,ELSE|0;"
+    append_fragment: str
+
+    confidence: float
+    reason: str
+    unsupported_guidance: str
+
+    warnings: list[str]
+    errors: list[str]
+
+
+class OracleInspectionResult(TypedDict, total=False):
+    """
+    Result of reading the current Oracle state through MCP.
+    """
+
+    can_generate_sql: bool
+
+    param_id: str
+    template_id: str
+    attribute_name: str
+    current_attribute_value: str
+
+    exists: bool
+    duplicate_append_key: bool
+
+    warnings: list[str]
+    errors: list[str]
+
+
+class SqlGenerationResult(TypedDict, total=False):
+    """
+    Final generated SQL and rollback SQL.
+    """
+
+    can_execute: bool
+    recommended_sql: str
+    rollback_sql: str
+
+    reason: str
+    warnings: list[str]
+    errors: list[str]
+
 
 class AdvisorState(TypedDict, total=False):
     """
-    Shared LangGraph state for the Activiti Mediation Template SQL Advisor.
+    Minimal graph state.
 
-    Every graph node receives this state and returns partial updates to it.
+    Keep this clean to prevent context pollution.
 
-    Example:
-        planner_node reads:
-            user_requirement
-
-        planner_node writes:
-            operation_type
-            template_id
-            attribute_name
-
-        oracle_inspection_node reads:
-            template_id
-            attribute_name
-
-        oracle_inspection_node writes:
-            current_template
-            current_parameter
+    Each node should read only what it needs and write only its own nested result.
     """
 
-    # Optional conversation messages.
-    # add_messages tells LangGraph how to append messages instead of replacing them.
-    messages: Annotated[list[AnyMessage], add_messages]
-
-    # Original user input.
     user_requirement: str
 
-    # What kind of change the user is asking for.
-    operation_type: OperationType
+    plan: RequestPlan
+    template: TemplateResolutionResult
+    expression: ExpressionResult
+    oracle: OracleInspectionResult
+    sql: SqlGenerationResult
 
-    # Template / parameter details extracted from the requirement.
-    template_id: str
-    attribute_name: str
-    new_attribute_name: str
-    new_attribute_value: str
-    value_to_append: str
-
-    # Expression compilation details.
-    expression_compilation_did_compile: bool
-    expression_compilation_confidence: float
-    expression_compilation_reason: str
-    expression_compilation_warnings: list[str]
-
-    # Template registry resolution details.
-    template_external_system: str
-    template_resolution_matched_text: str
-    template_resolution_match_type: TemplateResolutionMatchType
-    template_resolution_score: float
-    template_resolution_reason: str
-
-    # RAG information from Pinecone documentation retrieval.
-    rag_query: str
-    rag_context: list[dict[str, Any]]
-
-    # Oracle/MCP inspection results.
-    template_exists: bool
-    current_template: dict[str, Any] | None
-    current_parameter: dict[str, Any] | None
-    related_parameters: list[dict[str, Any]]
-
-    # SQL advisor output.
-    generated_sql: list[str]
-    rollback_sql: list[str]
-
-    # Safety and validation output.
-    validation_errors: list[str]
-    warnings: list[str]
-
-    # Final response to show the user.
     final_answer: str
+
+    warnings: list[str]
+    errors: list[str]
+
+    # Only for optional debug data.
+    # Do not put large RAG context here unless debug mode is enabled.
+    debug: dict[str, Any]
 
 
 def create_initial_state(user_requirement: str) -> AdvisorState:
-    """
-    Create the initial graph state from a raw user requirement.
+    return {
+        "user_requirement": user_requirement,
+        "warnings": [],
+        "errors": [],
+        "debug": {},
+    }
 
-    We keep default values explicit so later graph nodes can safely read fields
-    without constantly checking whether keys exist.
-    """
-    return AdvisorState(
-        messages=[],
-        user_requirement=user_requirement,
-        operation_type="unknown",
-        template_id="",
-        attribute_name="",
-        new_attribute_name="",
-        new_attribute_value="",
-        value_to_append="",
-        expression_compilation_did_compile=False,
-        expression_compilation_confidence=0.0,
-        expression_compilation_reason="",
-        expression_compilation_warnings=[],
-        template_external_system="",
-        template_resolution_matched_text="",
-        template_resolution_match_type="not_found",
-        template_resolution_score=0.0,
-        template_resolution_reason="",
-        rag_query="",
-        rag_context=[],
-        template_exists=False,
-        current_template=None,
-        current_parameter=None,
-        related_parameters=[],
-        generated_sql=[],
-        rollback_sql=[],
-        validation_errors=[],
-        warnings=[],
-        final_answer="",
-    )
+
+def append_warning(state: AdvisorState, warning: str) -> list[str]:
+    warnings = list(state.get("warnings", []) or [])
+    warnings.append(warning)
+    return warnings
+
+
+def append_error(state: AdvisorState, error: str) -> list[str]:
+    errors = list(state.get("errors", []) or [])
+    errors.append(error)
+    return errors

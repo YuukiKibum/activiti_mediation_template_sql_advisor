@@ -1,141 +1,140 @@
-version: 1
-
-description: >
-  Deterministic template registry for resolving business/product phrases
-  to ACT_MEDIATION_TEMPLATE.TEMPLATE_ID values.
+# Template registry for Activiti Mediation Template SQL Advisor
+# Resolver uses:
+# - template_id
+# - external_system
+# - description
+# - aliases
+#
+# IMPORTANT:
+# Use aliases, not only synonyms.
+# "Prepaid Base Plan ECM request" must resolve to MT_ECM_PRE_BASEPLAN.
 
 templates:
-  - template_id: PREPAID_OT_IN_MAPPING
-    external_system: IN
-    aliases: []
-
-  - template_id: PREPAID_PLAN_IN_MAPPING
-    external_system: IN
-    aliases: []
-
-  - template_id: PREPAID_PSM_PLAN_MT
-    external_system: PSM
-    aliases: []
-
-  - template_id: PREPAID_RCS_IN_MAPPING
-    external_system: IN
-    aliases: []
-
-  - template_id: PREPAID_IN_GROUP_OFFER_MT
-    external_system: IN
-    aliases:
-      - Prepaid IN Group Offer
-      - IN Group Offer
-      - Prepaid Group Offer IN
-
-  - template_id: PREPAID_IN_PDPFU_OT_C_M_MT
-    external_system: IN
-    aliases: []
-
-  - template_id: PREPAID_IN_PDPFU_OT_D_M_MT
-    external_system: IN
-    aliases: []
-
   - template_id: BUNDLE_PREPAID_CC_BR_GROUP_PO
-    external_system: ECM
-    aliases: []
+    external_system: UNKNOWN
+    description: "Bundle prepaid main group"
+    product_type: "prepaid_bundle"
+    aliases:
+      - Bundle prepaid main group
+      - Bundle Prepaid CC BR Group PO
+      - Bundle prepaid group PO
+      - Bundle prepaid main group PO
+      - BUNDLE_PREPAID_CC_BR_GROUP_PO
 
   - template_id: BUNDLE_PREPAID_ECM_ATTRS_MT
     external_system: ECM
-    aliases: []
+    description: "Bundle Prepaid Plan ECM ATTR MT"
+    product_type: "prepaid_bundle"
+    aliases:
+      - Bundle Prepaid Plan ECM ATTR MT
+      - Bundle prepaid ECM attributes
+      - Bundle prepaid ECM attrs
+      - Bundle prepaid plan ECM attributes template
+      - BUNDLE_PREPAID_ECM_ATTRS_MT
 
   - template_id: BUNDLE_PREPAID_ECM_MAIN_MT
     external_system: ECM
+    description: "Bundle Prepaid Plan ECM main MT"
+    product_type: "prepaid_bundle"
     aliases:
-      - Bundle Prepaid ECM
-      - Prepaid Bundle ECM
+      - Bundle Prepaid Plan ECM main MT
+      - Bundle prepaid ECM main
+      - Bundle prepaid plan ECM main template
+      - Bundle prepaid ECM template
+      - BUNDLE_PREPAID_ECM_MAIN_MT
 
   - template_id: BUNDLE_PREPAID_PSM_PLAN_MT
     external_system: PSM
+    description: "Bundle prepaid PSM"
+    product_type: "prepaid_bundle"
     aliases:
-      - Bundle Prepaid PSM
-      - Prepaid Bundle PSM
+      - Bundle prepaid PSM
+      - Bundle prepaid PSM plan
+      - Bundle prepaid PSM template
+      - BUNDLE_PREPAID_PSM_PLAN_MT
 
   - template_id: MT_COMS_PREPAID_PLAN
     external_system: COMS
+    description: "MT_COMS_PREPAID_PLAN"
+    product_type: "prepaid_base_plan"
     aliases:
-      - COMS Prepaid Plan
-      - Prepaid COMS Plan
+      - COMS prepaid plan
+      - Prepaid COMS plan
+      - Prepaid Base Plan COMS request
+      - Prepaid Base Plan COMS template
+      - MT_COMS_PREPAID_PLAN
 
   - template_id: MT_ECM_PRE_BASEPLAN
     external_system: ECM
+    description: "create CCM prepaid Base plan"
+    product_type: "prepaid_base_plan"
     aliases:
       - Prepaid Base Plan ECM request
+      - Prepaid Base Plan ECM template
       - Prepaid Base Plan ECM
-      - ECM Prepaid Base Plan
       - Base Plan ECM
+      - ECM Base Plan
+      - ECM Prepaid Base Plan
+      - ECM prepaid base plan request
+      - create CCM prepaid Base plan
       - CCM prepaid Base plan
+      - MT_ECM_PRE_BASEPLAN
 
-  - template_id: PREPAID_IN_PLAN_M_MT
+  - template_id: MT_PARKING_PREPAID
     external_system: IN
+    description: "prepaid parking service"
+    product_type: "prepaid_service"
     aliases:
-      - Prepaid IN Plan M
-      - IN Prepaid Plan M
+      - Prepaid parking service
+      - Parking prepaid service
+      - MT_PARKING_PREPAID
 
-  - template_id: PREPAID_RC_IN_MAPPING
-    external_system: IN
-    aliases: []
-
-  - template_id: PREPAID_RTC_IN_MAPPING
-    external_system: IN
-    aliases: []
-
-  - template_id: PRE_APP_GENERAL_ECM_MT
-    external_system: ECM
+  - template_id: MT_PREPAID_STK_NOTIFY_STORE
+    external_system: STK
+    description: "Prepaid Sales Tool Kit Notify Product Store Availability Template"
+    product_type: "prepaid_store"
     aliases:
-      - Prepaid App General ECM
-      - General ECM Prepaid
-
-  - template_id: PRE_APP_GENERAL_OT_IN_MT
-    external_system: IN
-    aliases:
-      - Prepaid App General OT IN
-      - General OT IN Prepaid
-
-  - template_id: PRE_APP_GENERAL_RC_IN_MT
-    external_system: IN
-    aliases:
-      - Prepaid App General RC IN
-      - General RC IN Prepaid
-
-  - template_id: PREPAID_IN_PLAN_RB_MT
-    external_system: IN
-    aliases:
-      - Prepaid IN Plan RB
-      - IN Prepaid Plan RB
-
-  - template_id: PREPAID_OGR_TIBCO_IN_PDPROAM
-    external_system: TIBCO to IN
-    aliases:
-      - Prepaid OGR TIBCO IN
-      - TIBCO to IN Prepaid OGR
+      - Prepaid Sales Tool Kit Notify Product Store Availability Template
+      - Prepaid STK notify store
+      - Prepaid store availability notify
+      - MT_PREPAID_STK_NOTIFY_STORE
 
   - template_id: MT_PREPAID_STK_UPD_PROD_STORE
-    external_system: SALES TOOL KIT
+    external_system: STK
+    description: "Prepaid Sales Tool Kit Update Product Store Availability Template"
+    product_type: "prepaid_store"
     aliases:
-      - Prepaid STK Update Product Store
-      - STK Update Product Store
-      - Sales Tool Kit Update Product Store
+      - Prepaid Sales Tool Kit Update Product Store Availability Template
+      - Prepaid STK update product store
+      - Prepaid store availability update
+      - MT_PREPAID_STK_UPD_PROD_STORE
 
   - template_id: MT_RTF_BUNDLE_PREPAID_PLAN
     external_system: RTF
+    description: "Bundle prepaid RTF"
+    product_type: "prepaid_bundle"
     aliases:
-      - RTF Bundle Prepaid Plan
-      - Bundle Prepaid Plan RTF
+      - Bundle prepaid RTF
+      - Bundle prepaid RTF plan
+      - Bundle Prepaid Plan RTF request
+      - Bundle Prepaid Plan RTF template
+      - MT_RTF_BUNDLE_PREPAID_PLAN
 
   - template_id: MT_RTF_PREPAID_PLAN
     external_system: RTF
+    description: "MT_RTF_PREPAID_PLAN"
+    product_type: "prepaid_base_plan"
     aliases:
-      - RTF Prepaid Plan
-      - Prepaid Plan RTF
+      - Prepaid RTF plan
+      - RTF prepaid plan
+      - Prepaid Base Plan RTF request
+      - Prepaid Base Plan RTF template
+      - MT_RTF_PREPAID_PLAN
 
   - template_id: MT_RTF_TC_PREP_PLAN
     external_system: RTF
+    description: "MT_RTF_TC_PREP_PLAN"
+    product_type: "prepaid_base_plan"
     aliases:
       - Prepaid Base Plan RTF request
       - Prepaid Base Plan RTF template
@@ -145,70 +144,286 @@ templates:
       - RTF TC Prepaid Plan
       - RTF TC Prep Plan
       - Prepaid RTF TC Plan
+      - MT_RTF_TC_PREP_PLAN
 
   - template_id: PREPAID_INM_PDPFU_OT_C_M_MT
-    external_system: IN
-    aliases: []
+    external_system: INM
+    description: "prepaid PDP free units Addon one time Per Call TIPCO Mapping mediation template"
+    product_type: "prepaid_addon"
+    aliases:
+      - Prepaid PDP free units addon one time per call INM
+      - Prepaid PDPFU OT per call INM
+      - PREPAID_INM_PDPFU_OT_C_M_MT
 
   - template_id: PREPAID_INM_PDPFU_OT_D_M_MT
-    external_system: IN
-    aliases: []
+    external_system: INM
+    description: "prepaid PDP free units Addon one time Per Day TIPCO Mapping mediation template"
+    product_type: "prepaid_addon"
+    aliases:
+      - Prepaid PDP free units addon one time per day INM
+      - Prepaid PDPFU OT per day INM
+      - PREPAID_INM_PDPFU_OT_D_M_MT
 
   - template_id: PREPAID_INM_PDPFU_RC_ANY_B_MT
-    external_system: IN
-    aliases: []
+    external_system: INM
+    description: "prepaid PDP free units Addon RC Any TIPCO Mapping mediation template"
+    product_type: "prepaid_addon"
+    aliases:
+      - Prepaid PDP free units addon RC any INM base
+      - Prepaid PDPFU RC any INM base
+      - PREPAID_INM_PDPFU_RC_ANY_B_MT
 
   - template_id: PREPAID_INM_PDPFU_RC_DAY_M_MT
+    external_system: INM
+    description: "prepaid PDP free units Addon RC Per Day TIPCO Mapping mediation template"
+    product_type: "prepaid_addon"
+    aliases:
+      - Prepaid PDP free units addon RC per day INM main
+      - Prepaid PDPFU RC per day INM main
+      - PREPAID_INM_PDPFU_RC_DAY_M_MT
+
+  - template_id: PREPAID_IN_GROUP_OFFER_MT
     external_system: IN
-    aliases: []
+    description: "prepaid group offer"
+    product_type: "prepaid_offer"
+    aliases:
+      - Prepaid group offer
+      - IN prepaid group offer
+      - PREPAID_IN_GROUP_OFFER_MT
+
+  - template_id: PREPAID_IN_PDPFU_OT_C_M_MT
+    external_system: IN
+    description: "prepaid PDP free units one time Addon per call mediation template"
+    product_type: "prepaid_addon"
+    aliases:
+      - Prepaid PDP free units one time addon per call
+      - Prepaid PDPFU OT per call IN
+      - PREPAID_IN_PDPFU_OT_C_M_MT
+
+  - template_id: PREPAID_IN_PDPFU_OT_D_M_MT
+    external_system: IN
+    description: "prepaid PDP free units one time Addon per Day mediation template"
+    product_type: "prepaid_addon"
+    aliases:
+      - Prepaid PDP free units one time addon per day
+      - Prepaid PDPFU OT per day IN
+      - PREPAID_IN_PDPFU_OT_D_M_MT
 
   - template_id: PREPAID_IN_PDPFU_RC_ANY_B_MT
     external_system: IN
-    aliases: []
+    description: "prepaid PDP free units RC Addon -Any triger- base offer- mediation template"
+    product_type: "prepaid_addon"
+    aliases:
+      - Prepaid PDP free units RC any base offer
+      - Prepaid PDPFU RC any base
+      - PREPAID_IN_PDPFU_RC_ANY_B_MT
 
   - template_id: PREPAID_IN_PDPFU_RC_ANY_M_MT
     external_system: IN
-    aliases: []
+    description: "prepaid PDP free units RC Addon -Any triger- main offer- mediation template"
+    product_type: "prepaid_addon"
+    aliases:
+      - Prepaid PDP free units RC any main offer
+      - Prepaid PDPFU RC any main
+      - PREPAID_IN_PDPFU_RC_ANY_M_MT
 
   - template_id: PREPAID_IN_PDPFU_RC_DAY_B_MT
     external_system: IN
-    aliases: []
+    description: "prepaid PDP free units RC Addon -validaty triger- base offer- mediation template"
+    product_type: "prepaid_addon"
+    aliases:
+      - Prepaid PDP free units RC validity trigger base offer
+      - Prepaid PDPFU RC day base
+      - PREPAID_IN_PDPFU_RC_DAY_B_MT
 
   - template_id: PREPAID_IN_PDPFU_RC_DAY_M_MT
     external_system: IN
-    aliases: []
+    description: "prepaid PDP free units RC Addon -validaty triger- Main offer- mediation template"
+    product_type: "prepaid_addon"
+    aliases:
+      - Prepaid PDP free units RC validity trigger main offer
+      - Prepaid PDPFU RC day main
+      - PREPAID_IN_PDPFU_RC_DAY_M_MT
 
   - template_id: PREPAID_IN_PDPFU_RC_QOT_B_MT
     external_system: IN
-    aliases: []
+    description: "prepaid PDP free units RC Addon -Qota triger- base offer- mediation template"
+    product_type: "prepaid_addon"
+    aliases:
+      - Prepaid PDP free units RC quota trigger base offer
+      - Prepaid PDPFU RC quota base
+      - PREPAID_IN_PDPFU_RC_QOT_B_MT
 
   - template_id: PREPAID_IN_PDPRC_OT_C_M_MT
     external_system: IN
-    aliases: []
+    description: "prepaid PDP rate cutter Addon IN mediation template"
+    product_type: "prepaid_addon"
+    aliases:
+      - Prepaid PDP rate cutter one time addon IN
+      - Prepaid PDPRC OT IN
+      - PREPAID_IN_PDPRC_OT_C_M_MT
 
   - template_id: PREPAID_IN_PDPRC_RC_C_B_MT
     external_system: IN
-    aliases: []
+    description: "prepaid PDP rate cutter Addon IN mediation template"
+    product_type: "prepaid_addon"
+    aliases:
+      - Prepaid PDP rate cutter RC base addon IN
+      - Prepaid PDPRC RC base IN
+      - PREPAID_IN_PDPRC_RC_C_B_MT
 
   - template_id: PREPAID_IN_PDPRC_RC_C_M_MT
     external_system: IN
-    aliases: []
+    description: "prepaid PDP rate cutter Addon IN mediation template"
+    product_type: "prepaid_addon"
+    aliases:
+      - Prepaid PDP rate cutter RC main addon IN
+      - Prepaid PDPRC RC main IN
+      - PREPAID_IN_PDPRC_RC_C_M_MT
 
   - template_id: PREPAID_IN_PLAN_B_MT
     external_system: IN
+    description: "PREPAID_IN_PLAN_B_MT"
+    product_type: "prepaid_base_plan"
     aliases:
-      - Prepaid IN Plan B
-      - IN Prepaid Plan B
+      - Prepaid IN plan base
+      - IN prepaid base plan
+      - PREPAID_IN_PLAN_B_MT
 
-  - template_id: MT_PARKING_PREPAID
-    external_system: PARKING
+  - template_id: PREPAID_IN_PLAN_M_MT
+    external_system: IN
+    description: "PREPAID_IN_PLAN_M_MT"
+    product_type: "prepaid_main_plan"
     aliases:
-      - Parking Prepaid
-      - Prepaid Parking
+      - Prepaid IN plan main
+      - IN prepaid main plan
+      - PREPAID_IN_PLAN_M_MT
 
-  - template_id: MT_PREPAID_STK_NOTIFY_STORE
-    external_system: SALES TOOL KIT
+  - template_id: PREPAID_IN_PLAN_RB_MT
+    external_system: IN
+    description: "PREPAID_IN_PLAN_RB_MT"
+    product_type: "prepaid_base_plan"
     aliases:
-      - Prepaid STK Notify Store
-      - STK Notify Store
-      - Sales Tool Kit Notify Store
+      - Prepaid IN plan RB
+      - IN prepaid RB plan
+      - PREPAID_IN_PLAN_RB_MT
+
+  - template_id: PREPAID_OGR_TIBCO_IN_PDPROAM
+    external_system: TIBCO_IN
+    description: "Template for Prepaid Roaming IN"
+    product_type: "prepaid_roaming"
+    aliases:
+      - Template for Prepaid Roaming IN
+      - Prepaid roaming IN
+      - TIBCO prepaid roaming IN
+      - PREPAID_OGR_TIBCO_IN_PDPROAM
+
+  - template_id: PREPAID_OT_IN_MAPPING
+    external_system: IN
+    description: "mapping for in plan prepaid"
+    product_type: "prepaid_mapping"
+    aliases:
+      - mapping for in plan prepaid
+      - prepaid one time IN mapping
+      - prepaid OT IN mapping
+      - PREPAID_OT_IN_MAPPING
+
+  - template_id: PREPAID_PLAN_IN_MAPPING
+    external_system: IN
+    description: "PREPAID_PLAN_IN_MAPPING"
+    product_type: "prepaid_mapping"
+    aliases:
+      - Prepaid plan IN mapping
+      - IN prepaid plan mapping
+      - PREPAID_PLAN_IN_MAPPING
+
+  - template_id: PREPAID_PSM_PLAN_MT
+    external_system: PSM
+    description: "create PSM prepaid Base plan"
+    product_type: "prepaid_base_plan"
+    aliases:
+      - Prepaid Base Plan PSM request
+      - Prepaid Base Plan PSM template
+      - Prepaid Base Plan PSM
+      - Base Plan PSM
+      - PSM Base Plan
+      - create PSM prepaid Base plan
+      - PREPAID_PSM_PLAN_MT
+
+  - template_id: PREPAID_RCS_IN_MAPPING
+    external_system: IN
+    description: "IN sepecial needs tibco mapping"
+    product_type: "prepaid_mapping"
+    aliases:
+      - IN special needs tibco mapping
+      - prepaid RCS IN mapping
+      - PREPAID_RCS_IN_MAPPING
+
+  - template_id: PREPAID_RC_IN_MAPPING
+    external_system: IN
+    description: "mapping for in addon prepaid"
+    product_type: "prepaid_mapping"
+    aliases:
+      - mapping for in addon prepaid
+      - prepaid recurring charge IN mapping
+      - prepaid RC IN mapping
+      - PREPAID_RC_IN_MAPPING
+
+  - template_id: PREPAID_RTC_IN_MAPPING
+    external_system: IN
+    description: "mapping for in plan prepaid Rate Cutter"
+    product_type: "prepaid_mapping"
+    aliases:
+      - mapping for in plan prepaid Rate Cutter
+      - prepaid RTC IN mapping
+      - prepaid rate cutter IN mapping
+      - PREPAID_RTC_IN_MAPPING
+
+  - template_id: PREPAID_RTF_PDPFU_MT
+    external_system: RTF
+    description: "prepaid PDP free units Addon RTF mediation template"
+    product_type: "prepaid_addon"
+    aliases:
+      - prepaid PDP free units Addon RTF mediation template
+      - Prepaid PDPFU RTF
+      - Prepaid PDP free units RTF addon
+      - PREPAID_RTF_PDPFU_MT
+
+  - template_id: PRE_APP_GENERAL_ECM_MT
+    external_system: ECM
+    description: "prepaid ECM generic mediation template"
+    product_type: "prepaid_generic"
+    aliases:
+      - prepaid ECM generic mediation template
+      - Prepaid app general ECM
+      - General prepaid ECM template
+      - PRE_APP_GENERAL_ECM_MT
+
+  - template_id: PRE_APP_GENERAL_OT_IN_MT
+    external_system: IN
+    description: "prepaid IN generic onetime mediation template"
+    product_type: "prepaid_generic"
+    aliases:
+      - prepaid IN generic onetime mediation template
+      - Prepaid app general one time IN
+      - General prepaid OT IN template
+      - PRE_APP_GENERAL_OT_IN_MT
+
+  - template_id: PRE_APP_GENERAL_RC_IN_MT
+    external_system: IN
+    description: "prepaid IN generic RC mediation template"
+    product_type: "prepaid_generic"
+    aliases:
+      - prepaid IN generic RC mediation template
+      - Prepaid app general RC IN
+      - General prepaid RC IN template
+      - PRE_APP_GENERAL_RC_IN_MT
+
+  - template_id: RTF_PRE_DYNAMIC_PAMS
+    external_system: RTF
+    description: "RTF prepaid daynamic params mapping"
+    product_type: "prepaid_mapping"
+    aliases:
+      - RTF prepaid dynamic params mapping
+      - RTF prepaid dynamic parameters
+      - RTF_PRE_DYNAMIC_PAMS

@@ -71,7 +71,7 @@ def _document_to_context_item(
 
 def retrieve_documents(
     query: str,
-    top_k: int = 5,
+    top_k: int = 1,
 ) -> List[Document]:
     """
     Retrieve raw LangChain Document objects from Pinecone.

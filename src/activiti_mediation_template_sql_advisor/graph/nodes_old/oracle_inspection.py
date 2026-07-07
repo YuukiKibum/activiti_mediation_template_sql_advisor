@@ -113,87 +113,6 @@ def _append_key_exists_in_current_value(current_value: str, append_key: str) -> 
     return re.search(pattern, current_value, flags=re.IGNORECASE) is not None
 
 
-def _preview(value: str, max_length: int = 800) -> str:
-    value = value or ""
-
-    if len(value) <= max_length:
-        return value
-
-    return value[:max_length] + "..."
-
-
-def _build_sample_parameters(
-    rows: list[dict[str, Any]],
-    focus_attribute_name: str = "",
-    max_samples: int = 12,
-) -> list[dict[str, Any]]:
-    """
-    Build small Oracle examples for DSL pattern matching.
-
-    These are syntax evidence only:
-    - VAL_ usage
-    - mapping shape
-    - $. prefix style
-    - composite poAttributes style
-    """
-    focus = (focus_attribute_name or "").strip().lower()
-
-    normalized_rows: list[dict[str, Any]] = []
-
-    for row in rows or []:
-        attribute_name = str(
-            _get_any(
-                row,
-                "ATTRIBUTE_NAME",
-                "attribute_name",
-                default="",
-            )
-            or ""
-        )
-
-        attribute_value = str(
-            _get_any(
-                row,
-                "ATTRIBUTE_VALUE",
-                "attribute_value",
-                default="",
-            )
-            or ""
-        )
-
-        if not attribute_name:
-            continue
-
-        normalized_rows.append(
-            {
-                "param_id": str(
-                    _get_any(row, "PARAM_ID", "param_id", default="") or ""
-                ),
-                "attribute_name": attribute_name,
-                "attribute_value_preview": _preview(attribute_value),
-                "attribute_value_length": len(attribute_value),
-                "is_focus_attribute": attribute_name.strip().lower() == focus,
-            }
-        )
-
-    def sort_key(item: dict[str, Any]) -> tuple[int, int]:
-        value = str(item.get("attribute_value_preview", "") or "")
-
-        has_dsl_signal = any(
-            signal in value
-            for signal in ["VAL_", "#", "|", "$", ";"]
-        )
-
-        return (
-            0 if item.get("is_focus_attribute") else 1,
-            0 if has_dsl_signal else 1,
-        )
-
-    normalized_rows.sort(key=sort_key)
-
-    return normalized_rows[:max_samples]
-
-
 def _target_attribute_name(state: AdvisorState) -> str:
     """
     Attribute row that must already exist for the operation.
@@ -206,6 +125,7 @@ def _target_attribute_name(state: AdvisorState) -> str:
 
     For add:
         target ATTRIBUTE_NAME, but it must NOT already exist.
+        We still return attribute_name here for inspection display.
     """
     plan = state.get("plan", {}) or {}
     operation_type = str(plan.get("operation_type", "") or "")
@@ -263,7 +183,6 @@ async def oracle_inspection_node(state: AdvisorState) -> dict[str, Any]:
     - current ATTRIBUTE_VALUE for rollback/safety
     - duplicate append key inside current ATTRIBUTE_VALUE for append operations
     - duplicate target ATTRIBUTE_NAME for rename/add operations
-    - sample ATTRIBUTE_VALUE rows for DSL syntax pattern matching
 
     It does NOT generate SQL.
     It does NOT execute DML.
@@ -316,9 +235,6 @@ async def oracle_inspection_node(state: AdvisorState) -> dict[str, Any]:
             "target_parameter_row": {},
             "template_row": {},
             "parameter_row": {},
-            "sample_parameters": [],
-            "sample_parameter_count": 0,
-            "all_parameter_count": 0,
         }
 
         return {
@@ -343,23 +259,6 @@ async def oracle_inspection_node(state: AdvisorState) -> dict[str, Any]:
                     template_id=template_id,
                     attribute_name=attribute_name,
                 )
-
-            all_parameters: list[dict[str, Any]] = []
-
-            try:
-                all_parameters = await client.list_parameters_for_template(
-                    template_id=template_id,
-                    limit=100,
-                )
-            except Exception as sample_exc:
-                warnings.append(
-                    f"Could not fetch sample parameters for DSL pattern matching: {sample_exc}"
-                )
-
-            sample_parameters = _build_sample_parameters(
-                rows=all_parameters,
-                focus_attribute_name=attribute_name,
-            )
 
             parameter_exists = parameter_row is not None
 
@@ -405,11 +304,13 @@ async def oracle_inspection_node(state: AdvisorState) -> dict[str, Any]:
                     append_key=append_key,
                 )
 
+            # Template must exist for every operation.
             if not template_exists:
                 errors.append(
                     f"Template '{template_id}' does not exist in ACT_MEDIATION_TEMPLATE."
                 )
 
+            # Existing attribute must exist for these operations.
             if operation_type in {
                 "append_attribute_value",
                 "update_attribute_value",
@@ -421,6 +322,7 @@ async def oracle_inspection_node(state: AdvisorState) -> dict[str, Any]:
                     "in ACT_MEDIATION_PARAMETER."
                 )
 
+            # Add operation target must NOT already exist.
             if operation_type == "add_attribute":
                 if parameter_exists:
                     errors.append(
@@ -430,9 +332,10 @@ async def oracle_inspection_node(state: AdvisorState) -> dict[str, Any]:
                 else:
                     warnings.append(
                         "Add attribute target does not currently exist. "
-                        "SQL generation is still blocked until safe PARAM_ID generation is available."
+                        "SQL generation may still require PARAM_ID/order rules before insert can be safe."
                     )
 
+            # Rename operation target must NOT already exist.
             if operation_type == "rename_attribute":
                 if not target_attribute_name:
                     errors.append("Rename target new_attribute_name is missing.")
@@ -443,6 +346,7 @@ async def oracle_inspection_node(state: AdvisorState) -> dict[str, Any]:
                         f"'{target_attribute_name}' already exists for template '{template_id}'."
                     )
 
+            # Append operation key must NOT already exist inside current ATTRIBUTE_VALUE.
             if operation_type == "append_attribute_value":
                 if not append_key:
                     errors.append("Append key is missing.")
@@ -465,15 +369,13 @@ async def oracle_inspection_node(state: AdvisorState) -> dict[str, Any]:
                 "duplicate_append_key": duplicate_append_key,
                 "warnings": warnings,
                 "errors": errors,
+                # Extra debug-safe fields.
                 "template_exists": template_exists,
                 "template_row": template_row or {},
                 "parameter_row": parameter_row or {},
                 "target_attribute_name": target_attribute_name,
                 "target_exists": target_parameter_exists,
                 "target_parameter_row": target_parameter_row or {},
-                "sample_parameters": sample_parameters,
-                "sample_parameter_count": len(sample_parameters),
-                "all_parameter_count": len(all_parameters),
             }
 
             updates: dict[str, Any] = {
@@ -507,9 +409,6 @@ async def oracle_inspection_node(state: AdvisorState) -> dict[str, Any]:
             "target_parameter_row": {},
             "template_row": {},
             "parameter_row": {},
-            "sample_parameters": [],
-            "sample_parameter_count": 0,
-            "all_parameter_count": 0,
         }
 
         return {

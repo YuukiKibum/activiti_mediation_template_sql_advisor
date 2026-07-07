@@ -15,6 +15,7 @@ dependencies = [
     "langchain-text-splitters>=1.1.2",
     "langgraph>=1.2.7",
     "mcp[cli]<2",
+    "openai>=2.44.0",
     "oracledb>=4.0.1",
     "pydantic>=2.13.4",
     "pypdf>=6.14.2",
@@ -22,6 +23,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "pyyaml>=6.0.3",
     "rich>=15.0.0",
+    "scikit-learn>=1.9.0",
     "uvicorn[standard]>=0.50.0",
 ]
 
@@ -31,3 +33,8 @@ activiti-mediation-template-sql-advisor = "activiti_mediation_template_sql_advis
 [build-system]
 requires = ["uv_build>=0.11.16,<0.12.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

@@ -1,279 +1,117 @@
-from typing import Any
+from __future__ import annotations
 
 from activiti_mediation_template_sql_advisor.graph.state import AdvisorState
 
 
-def _format_sql_block(statements: list[str]) -> str:
-    """
-    Convert a list of SQL/comment strings into one SQL code block.
-    """
-    if not statements:
-        return "No SQL generated."
+def _section(title: str, body: str) -> str:
+    body = body.strip()
 
-    return "\n\n".join(statements)
+    if not body:
+        return ""
 
-
-def _format_rag_sources(rag_context: list[dict[str, Any]]) -> str:
-    """
-    Create a short source summary from retrieved RAG chunks.
-    """
-    if not rag_context:
-        return "No RAG documentation context was retrieved."
-
-    seen: set[str] = set()
-    sources: list[str] = []
-
-    for item in rag_context:
-        source = str(item.get("source", "Unknown"))
-        score = item.get("score")
-
-        key = source
-
-        if key in seen:
-            continue
-
-        seen.add(key)
-
-        if score is not None:
-            sources.append(f"- {source} — score: {score}")
-        else:
-            sources.append(f"- {source}")
-
-    return "\n".join(sources)
+    return f"## {title}\n\n{body}"
 
 
-def _format_current_parameter_preview(state: AdvisorState) -> str:
-    """
-    Show a small preview of the current Oracle parameter row.
-    """
-    current_parameter = state.get("current_parameter")
+def final_response_node(state: AdvisorState) -> dict:
+    plan = state.get("plan", {}) or {}
+    template = state.get("template", {}) or {}
+    expression = state.get("expression", {}) or {}
+    oracle = state.get("oracle", {}) or {}
+    sql = state.get("sql", {}) or {}
 
-    if not current_parameter:
-        return "No current parameter row was found."
+    warnings = state.get("warnings", []) or []
+    errors = state.get("errors", []) or []
 
-    attribute_value = str(current_parameter.get("attribute_value") or "")
+    summary_lines = [
+        f"Operation: {plan.get('operation_type', 'unknown')}",
+        f"Template ID: {template.get('template_id', 'Not resolved') or 'Not resolved'}",
+        f"External system: {template.get('external_system', '') or 'Not available'}",
+        f"Template match: {template.get('match_type', '') or 'Not available'}",
+        f"Attribute: {plan.get('attribute_name', '') or 'Not applicable'}",
+    ]
 
-    preview = attribute_value[:700]
-
-    if len(attribute_value) > 700:
-        preview += "..."
-
-    return "\n".join(
-        [
-            f"- PARAM_ID: {current_parameter.get('param_id')}",
-            f"- TEMPLATE_ID: {current_parameter.get('template_id')}",
-            f"- ATTRIBUTE_NAME: {current_parameter.get('attribute_name')}",
-            f"- ATTRIBUTE_VALUE preview: {preview}",
-        ]
-    )
-
-
-def final_response_node(state: AdvisorState) -> dict[str, Any]:
-    """
-    LangGraph node: create the final human-readable advisor response.
-
-    Reads:
-        user_requirement
-        operation_type
-        template_id
-        attribute_name
-        new_attribute_name
-        new_attribute_value
-        value_to_append
-        current_template
-        current_parameter
-        rag_context
-        generated_sql
-        rollback_sql
-        warnings
-        validation_errors
-
-    Writes:
-        final_answer
-    """
-    user_requirement = state.get("user_requirement", "")
-    operation_type = state.get("operation_type", "unknown")
-    template_id = state.get("template_id", "")
-    attribute_name = state.get("attribute_name", "")
-    new_attribute_name = state.get("new_attribute_name", "")
-    generated_sql = state.get("generated_sql", [])
-    rollback_sql = state.get("rollback_sql", [])
-    warnings = state.get("warnings", [])
-    validation_errors = state.get("validation_errors", [])
-    rag_context = state.get("rag_context", [])
-
-    sections: list[str] = []
-
-    sections.append("# Activiti Mediation Template SQL Advisor")
-
-    sections.append(
-        "\n".join(
+    if plan.get("operation_type") == "append_attribute_value":
+        summary_lines.extend(
             [
-                "## Requirement",
-                user_requirement or "No requirement provided.",
+                f"Container attribute: {plan.get('container_attribute_name', '')}",
+                f"Append key: {plan.get('append_key', '')}",
             ]
         )
-    )
 
-    sections.append(
-        "\n".join(
-            [
-                "## Planner Summary",
-                f"- Operation type: `{operation_type}`",
-                f"- TEMPLATE_ID: `{template_id}`",
-                f"- ATTRIBUTE_NAME: `{attribute_name}`",
-                f"- New ATTRIBUTE_NAME: `{new_attribute_name}`"
-                if new_attribute_name
-                else "- New ATTRIBUTE_NAME: not applicable",
-            ]
-        )
-    )
+    if plan.get("operation_type") == "rename_attribute":
+        summary_lines.append(f"New attribute name: {plan.get('new_attribute_name', '')}")
 
-    sections.append(
-        "\n".join(
-            [
-                "## Expression Compilation",
-                f"- Did compile: `{state.get('expression_compilation_did_compile', False)}`",
-                f"- Confidence: `{state.get('expression_compilation_confidence', 0.0)}`",
-                f"- Reason: {state.get('expression_compilation_reason', '') or 'Not applicable'}",
-            ]
-        )
-    )
+    expression_lines = [
+        f"Compiled: {expression.get('did_compile', False)}",
+        f"Supported: {expression.get('is_supported', False)}",
+        f"Evaluator: {expression.get('selected_evaluator', '') or 'Not available'}",
+        f"Selected KB record: {expression.get('selected_record_id', '') or 'Not available'}",
+        f"Compiled RHS: {expression.get('compiled_rhs', '') or 'Not available'}",
+    ]
 
-    sections.append(
-        "\n".join(
-            [
-                "## Current Oracle Configuration",
-                _format_current_parameter_preview(state),
-            ]
-        )
-    )
+    if expression.get("append_fragment"):
+        expression_lines.append(f"Append fragment: {expression.get('append_fragment')}")
 
-    sections.append(
-        "\n".join(
-            [
-                "## RAG Documentation Sources",
-                _format_rag_sources(rag_context),
-            ]
-        )
-    )
+    if expression.get("reason"):
+        expression_lines.append("")
+        expression_lines.append("DSL answer:")
+        expression_lines.append(str(expression.get("reason", "")))
 
-    if validation_errors:
-        sections.append(
-            "\n".join(
-                [
-                    "## Validation Errors",
-                    "\n".join(f"- {error}" for error in validation_errors),
-                ]
-            )
-        )
+    oracle_lines = [
+        f"Can generate SQL: {oracle.get('can_generate_sql', False)}",
+        f"Template ID: {oracle.get('template_id', '') or 'Not available'}",
+        f"Attribute name: {oracle.get('attribute_name', '') or 'Not available'}",
+    ]
 
-        sections.append(
-            "SQL was not generated because validation errors were found."
-        )
+    if oracle.get("warnings"):
+        oracle_lines.append("")
+        oracle_lines.append("Oracle warnings:")
+        oracle_lines.extend(f"- {warning}" for warning in oracle.get("warnings", []))
 
-    else:
-        sections.append(
-            "\n".join(
-                [
-                    "## Recommended SQL",
-                    "```sql",
-                    _format_sql_block(generated_sql),
-                    "```",
-                ]
-            )
-        )
+    sql_lines = [
+        f"Can execute: {sql.get('can_execute', False)}",
+        f"Reason: {sql.get('reason', '')}",
+    ]
 
-        sections.append(
-            "\n".join(
-                [
-                    "## Rollback SQL",
-                    "```sql",
-                    _format_sql_block(rollback_sql),
-                    "```",
-                ]
-            )
-        )
+    if sql.get("recommended_sql"):
+        sql_lines.append("")
+        sql_lines.append("Recommended SQL:")
+        sql_lines.append("```sql")
+        sql_lines.append(str(sql.get("recommended_sql", "")))
+        sql_lines.append("```")
+
+    if sql.get("rollback_sql"):
+        sql_lines.append("")
+        sql_lines.append("Rollback SQL:")
+        sql_lines.append("```sql")
+        sql_lines.append(str(sql.get("rollback_sql", "")))
+        sql_lines.append("```")
+
+    warning_error_lines: list[str] = []
 
     if warnings:
-        sections.append(
-            "\n".join(
-                [
-                    "## Warnings",
-                    "\n".join(f"- {warning}" for warning in warnings),
-                ]
-            )
-        )
+        warning_error_lines.append("Warnings:")
+        warning_error_lines.extend(f"- {warning}" for warning in warnings)
 
-    sections.append(
-        "\n".join(
-            [
-                "## Safety Note",
-                (
-                    "This assistant only generated advisory SQL. "
-                    "Review the pre-checks and SQL manually before running anything in Oracle."
-                ),
-            ]
-        )
+    if errors:
+        if warning_error_lines:
+            warning_error_lines.append("")
+
+        warning_error_lines.append("Errors:")
+        warning_error_lines.extend(f"- {error}" for error in errors)
+
+    final_answer = "\n\n".join(
+        section
+        for section in [
+            _section("Advisor Summary", "\n".join(summary_lines)),
+            _section("Expression Compilation", "\n".join(expression_lines)),
+            _section("Oracle Inspection", "\n".join(oracle_lines)),
+            _section("SQL Advisory", "\n".join(sql_lines)),
+            _section("Warnings / Errors", "\n".join(warning_error_lines)),
+        ]
+        if section
     )
 
     return {
-        "final_answer": "\n\n".join(sections)
+        "final_answer": final_answer,
     }
-
-
-if __name__ == "__main__":
-    test_state: AdvisorState = {
-        "user_requirement": (
-            "Rename poAttributes to poAttributeList for MT_ECM_PRE_BASEPLAN"
-        ),
-        "operation_type": "rename_attribute",
-        "template_id": "MT_ECM_PRE_BASEPLAN",
-        "attribute_name": "poAttributes",
-        "new_attribute_name": "poAttributeList",
-        "current_parameter": {
-            "param_id": 210354,
-            "template_id": "MT_ECM_PRE_BASEPLAN",
-            "attribute_name": "poAttributes",
-            "attribute_value": "ccat_product_category=VAL_Consumer;ccat_product_group=VAL_M;",
-        },
-        "rag_context": [
-            {
-                "source": "Objective.docx",
-                "score": 0.56,
-            },
-            {
-                "source": "The Activiti Mediation Expression.docx",
-                "score": 0.37,
-            },
-        ],
-        "generated_sql": [
-            "-- Pre-check: source attribute should exist",
-            "SELECT PARAM_ID, TEMPLATE_ID, ATTRIBUTE_NAME, ATTRIBUTE_VALUE\n"
-            "FROM ACT_MEDIATION_PARAMETER\n"
-            "WHERE TEMPLATE_ID = 'MT_ECM_PRE_BASEPLAN' "
-            "AND ATTRIBUTE_NAME = 'poAttributes';",
-            "-- Change: rename ATTRIBUTE_NAME",
-            "UPDATE ACT_MEDIATION_PARAMETER\n"
-            "SET ATTRIBUTE_NAME = 'poAttributeList'\n"
-            "WHERE TEMPLATE_ID = 'MT_ECM_PRE_BASEPLAN' "
-            "AND ATTRIBUTE_NAME = 'poAttributes';",
-            "COMMIT;",
-        ],
-        "rollback_sql": [
-            "-- Rollback: restore old ATTRIBUTE_NAME",
-            "UPDATE ACT_MEDIATION_PARAMETER\n"
-            "SET ATTRIBUTE_NAME = 'poAttributes'\n"
-            "WHERE TEMPLATE_ID = 'MT_ECM_PRE_BASEPLAN' "
-            "AND ATTRIBUTE_NAME = 'poAttributeList';",
-            "COMMIT;",
-        ],
-        "warnings": [
-            "Generated SQL is advisory only. Review and run manually in Oracle."
-        ],
-        "validation_errors": [],
-    }
-
-    result = final_response_node(test_state)
-
-    print(result["final_answer"])

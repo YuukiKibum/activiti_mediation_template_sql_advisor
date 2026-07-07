@@ -35,65 +35,101 @@ async def home() -> str:
 async def advisor(request: AdvisorRequest) -> dict[str, Any]:
     final_state = await run_advisor(request.requirement)
 
-    current_parameter = final_state.get("current_parameter") or {}
-    current_template = final_state.get("current_template") or {}
+    plan = final_state.get("plan") or {}
+    template = final_state.get("template") or {}
+    expression = final_state.get("expression") or {}
+    oracle = final_state.get("oracle") or {}
+    sql = final_state.get("sql") or {}
 
-    attribute_value = str(current_parameter.get("attribute_value") or "")
+    parameter_row = oracle.get("parameter_row") or {}
+    template_row = oracle.get("template_row") or {}
+
+    attribute_value = str(
+        oracle.get("current_attribute_value")
+        or parameter_row.get("ATTRIBUTE_VALUE")
+        or parameter_row.get("attribute_value")
+        or ""
+    )
+
+    recommended_sql = sql.get("recommended_sql") or ""
+    rollback_sql = sql.get("rollback_sql") or ""
+
+    warnings = []
+    warnings.extend(final_state.get("warnings") or [])
+    warnings.extend(expression.get("warnings") or [])
+    warnings.extend(oracle.get("warnings") or [])
+    warnings.extend(sql.get("warnings") or [])
+
+    validation_errors = []
+    validation_errors.extend(final_state.get("errors") or [])
+    validation_errors.extend(expression.get("errors") or [])
+    validation_errors.extend(oracle.get("errors") or [])
+    validation_errors.extend(sql.get("errors") or [])
+
+    operation_type = plan.get("operation_type", "unknown")
+
+    if operation_type == "append_attribute_value":
+        compiled_value = expression.get("append_fragment", "")
+    elif operation_type in {"add_attribute", "update_attribute_value"}:
+        compiled_value = expression.get("compiled_rhs", "")
+    else:
+        compiled_value = ""
 
     return {
-        "requirement": final_state.get("user_requirement", ""),
-        "operation_type": final_state.get("operation_type", "unknown"),
-        "template_id": final_state.get("template_id", ""),
-        "template_external_system": final_state.get("template_external_system", ""),
-        "template_resolution_match_type": final_state.get(
-            "template_resolution_match_type", ""
-        ),
-        "template_resolution_matched_text": final_state.get(
-            "template_resolution_matched_text", ""
-        ),
-        "template_resolution_score": final_state.get(
-            "template_resolution_score", 0.0
-        ),
-        "template_resolution_reason": final_state.get(
-            "template_resolution_reason", ""
-        ),
-        "attribute_name": final_state.get("attribute_name", ""),
-        "new_attribute_name": final_state.get("new_attribute_name", ""),
-        "new_attribute_value": final_state.get("new_attribute_value", ""),
-        "value_to_append": final_state.get("value_to_append", ""),
-        "expression_compilation_did_compile": final_state.get(
-            "expression_compilation_did_compile", False
-        ),
-        "expression_compilation_confidence": final_state.get(
-            "expression_compilation_confidence", 0.0
-        ),
-        "expression_compilation_reason": final_state.get(
-            "expression_compilation_reason", ""
-        ),
-        "expression_compilation_warnings": final_state.get(
-            "expression_compilation_warnings", []
-        ),
-        "current_template": current_template,
+        "requirement": final_state.get("user_requirement", request.requirement),
+
+        # Planner / intent
+        "operation_type": operation_type,
+        "attribute_name": plan.get("attribute_name", ""),
+        "new_attribute_name": plan.get("new_attribute_name", ""),
+        "container_attribute_name": plan.get("container_attribute_name", ""),
+        "append_key": plan.get("append_key", ""),
+        "new_attribute_value": expression.get("compiled_rhs", ""),
+        "value_to_append": expression.get("append_fragment", ""),
+
+        # Template resolution
+        "template_id": template.get("template_id", ""),
+        "template_external_system": template.get("external_system", ""),
+        "template_resolution_match_type": template.get("match_type", ""),
+        "template_resolution_matched_text": template.get("matched_text", ""),
+        "template_resolution_score": template.get("score", 0.0),
+        "template_resolution_reason": template.get("reason", ""),
+
+        # Expression compilation
+        "expression_compilation_did_compile": expression.get("did_compile", False),
+        "expression_compilation_confidence": expression.get("confidence", 0.0),
+        "expression_compilation_reason": expression.get("reason", ""),
+        "expression_compilation_warnings": expression.get("warnings", []),
+        "selected_evaluator": expression.get("selected_evaluator", ""),
+        "selected_record_id": expression.get("selected_record_id", ""),
+        "compiled_value": compiled_value,
+
+        # Oracle MCP inspection
+        "current_template": template_row,
         "current_parameter": {
-            "param_id": current_parameter.get("param_id"),
-            "template_id": current_parameter.get("template_id"),
-            "attribute_name": current_parameter.get("attribute_name"),
+            "param_id": oracle.get("param_id") or parameter_row.get("PARAM_ID") or parameter_row.get("param_id"),
+            "template_id": oracle.get("template_id") or parameter_row.get("TEMPLATE_ID") or parameter_row.get("template_id"),
+            "attribute_name": oracle.get("attribute_name") or parameter_row.get("ATTRIBUTE_NAME") or parameter_row.get("attribute_name"),
             "attribute_value_preview": _preview(attribute_value),
         }
-        if current_parameter
+        if oracle.get("exists") or parameter_row
         else None,
-        "rag_sources": [
-            {
-                "source": item.get("source", "Unknown"),
-                "score": item.get("score"),
-                "content_preview": _preview(str(item.get("content") or ""), 500),
-            }
-            for item in final_state.get("rag_context", [])
-        ],
-        "generated_sql": final_state.get("generated_sql", []),
-        "rollback_sql": final_state.get("rollback_sql", []),
-        "warnings": final_state.get("warnings", []),
-        "validation_errors": final_state.get("validation_errors", []),
+
+        "oracle": oracle,
+
+        # RAG sources
+        # New DSL RAG currently returns selected record/reason, not old rag_context list.
+        "rag_sources": [],
+
+        # SQL
+        "generated_sql": [recommended_sql] if recommended_sql else [],
+        "rollback_sql": [rollback_sql] if rollback_sql else [],
+
+        # Warnings / errors
+        "warnings": warnings,
+        "validation_errors": validation_errors,
+
+        # Full final markdown answer from graph
         "final_answer": final_state.get("final_answer", ""),
     }
 
@@ -564,7 +600,7 @@ HTML_PAGE = """
                 <h2>Requirement</h2>
                 <div class="label">Enter a mediation template change request</div>
 
-                <textarea id="requirement">For prepaid base plan rtf template, add a new attribute gundu with value 123</textarea>
+                <textarea id="requirement">For Prepaid Base Plan ECM request, add CustomerType with value if subscriberType is PREPAID show 1 else 0 inside existing poAttributes.</textarea>
 
                 <div class="button-row">
                     <button class="primary-button" onclick="runAdvisor()">

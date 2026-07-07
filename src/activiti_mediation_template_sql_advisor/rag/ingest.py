@@ -216,36 +216,63 @@ def split_documents(documents: List[Document]) -> List[Document]:
 
     return chunks
 
-def delete_existing_vectors_for_documents(documents: List[Document]) -> None:
+def _is_namespace_not_found_error(error: Exception) -> bool:
     """
-    Deletes existing Pinecone vectors for the same source files before re-ingestion.
+    Pinecone raises a 404 when delete is called on a namespace that does not exist yet.
 
-    This avoids duplicate/stale chunks when the same document is ingested again.
+    That is not a real failure for ingestion.
+    It simply means there are no old vectors to clean for that namespace.
     """
+    error_text = str(error).lower()
+    return (
+        "namespace not found" in error_text
+        or '"message":"namespace not found"' in error_text
+        or "notfoundexception" in error_text
+    )
+
+
+def delete_existing_vectors_for_documents(all_docs: list[Document]) -> None:
+    """
+    Delete existing vectors for each source file before re-ingesting.
+
+    This prevents duplicate chunks when the same document is ingested again.
+
+    If the Pinecone namespace does not exist yet, skip cleanup safely.
+    """
+    if not all_docs:
+        print("[yellow]No documents found for cleanup.[/yellow]")
+        return
+
     source_files = sorted(
         {
-            str(doc.metadata.get("source_file"))
-            for doc in documents
+            str(doc.metadata.get("source_file", "")).strip()
+            for doc in all_docs
             if doc.metadata.get("source_file")
         }
     )
 
     if not source_files:
-        print("No source_file metadata found. Skipping Pinecone cleanup.")
+        print("[yellow]No source_file metadata found for cleanup.[/yellow]")
         return
 
-    print("PINECONE CLEANUP PHASE")
+    print("[bold cyan]PINECONE CLEANUP PHASE[/bold cyan]")
 
     for source_file in source_files:
         print(f"Deleting existing vectors for source_file: {source_file}")
 
-        vectorstore.delete(
-            filter={
-                "source_file": {
-                    "$eq": source_file,
-                }
-            }
-        )
+        try:
+            vectorstore.delete(
+                filter={"source_file": {"$eq": source_file}},
+                namespace=PINECONE_NAMESPACE,
+            )
+        except Exception as error:
+            if _is_namespace_not_found_error(error):
+                print(
+                    f"[yellow]Namespace not found yet. Skipping cleanup for: {source_file}[/yellow]"
+                )
+                continue
+
+            raise
 
 
 async def index_documents_async(
