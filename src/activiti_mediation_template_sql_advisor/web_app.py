@@ -600,7 +600,7 @@ HTML_PAGE = """
                 <h2>Requirement</h2>
                 <div class="label">Enter a mediation template change request</div>
 
-                <textarea id="requirement">For Prepaid Base Plan ECM request, add CustomerType with value if subscriberType is PREPAID show 1 else 0 inside existing poAttributes.</textarea>
+                <textarea id="requirement">For Prepaid Base Plan ECM request, inside existing attribute poAttributes add CustomerType with value - if subscriberType is PREPAID show 1 else 0</textarea>
 
                 <div class="button-row">
                     <button class="primary-button" onclick="runAdvisor()">
