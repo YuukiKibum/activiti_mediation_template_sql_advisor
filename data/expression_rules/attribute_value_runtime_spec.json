@@ -1,0 +1,1270 @@
+{
+  "spec_header": {
+    "name": "Mediation ATTRIBUTE_VALUE Runtime Specification",
+    "version": "2.0",
+    "status": "advisor-owned-runtime-spec",
+    "description": "Project-owned specification for compiling ACT_MEDIATION_PARAMETER.ATTRIBUTE_VALUE. It documents the runtime expression grammar, storage shapes, delimiter rules, edge cases, and SQL-advisor safety policies in a schema designed for this advisor.",
+    "target": {
+      "table": "ACT_MEDIATION_PARAMETER",
+      "column": "ATTRIBUTE_VALUE",
+      "runtime_entry_point": "getCorrespondingAttributeValue(String attributeValue, String projectDTOJsonValue, Map<String, Object> session_information)"
+    },
+    "source_of_truth": [
+      "Runtime behavior observed in Util.java getCorrespondingAttributeValue(...) and related helper methods.",
+      "Existing Oracle ACT_MEDIATION_PARAMETER rows used as syntax examples.",
+      "Advisor-specific safety rules for generating reviewable SQL and rollback SQL."
+    ],
+    "authoring_note": "This file intentionally uses the SQL advisor's own schema and terminology. It preserves coverage from the previous rule map while organizing it around compiler responsibilities."
+  },
+  "runtime_model": {
+    "overview": "The ATTRIBUTE_VALUE column can be either a single atomic DSL expression or a composite semicolon-delimited set of key=value pairs. For composite values, each 'value' side uses the same prefix-based DSL to instruct the engine how to resolve the final runtime value from the source JSON or session.",
+    "resolution_pipeline": [
+      "Decide whether the database storage shape is a normal atomic ATTRIBUTE_VALUE or a composite key=value ATTRIBUTE_VALUE.",
+      "For the value side, check whether it starts with a known prefix token.",
+      "If a prefix token matches, run that token's runtime algorithm.",
+      "If no prefix token matches, check for complex function-call syntax such as $REPLACE(...)path or $LIST(...)path.",
+      "If no complex method matches, treat the expression as a direct DTO/source JSON path.",
+      "Apply mapping semantics when #mapping is present.",
+      "Apply global modifiers such as $M_ where supported.",
+      "Apply post-resolution cleanup such as trim and $COMA$ replacement."
+    ],
+    "expression_value_shape": "A compiled expression can be stored alone as ATTRIBUTE_VALUE, or as the value side inside key=<expression>; for composite container attributes."
+  },
+  "storage_contracts": {
+    "purpose": "Define how a compiled expression is stored in ACT_MEDIATION_PARAMETER. This is separate from how the expression itself is resolved at runtime.",
+    "shape_selection": [
+      "First decide whether the target ATTRIBUTE_VALUE shape is atomic_expression or composite_key_value_expression.",
+      "If the user says inside/within/under existing poAttributes, choose composite_key_value_expression and operation_kind append_subkey.",
+      "If the target is a normal ATTRIBUTE_NAME and not a container, choose atomic_expression and store only the compiled expression.",
+      "After deciding the shape, compile the value expression using prefix_dispatch_table and fallback_json_path_resolution.",
+      "VAL_ is only for static/literal values. Never use VAL_ for DTO/source field paths.",
+      "Plain paths with no prefix are DTO/source field reads by fallback JSON path resolution.",
+      "Mappings use sourceField#conditionValue|resultValue,ELSE|elseValue. The text before # is the source field, not the target attribute name or append key."
+    ],
+    "normal_attribute_row": {
+      "description": "The entire ATTRIBUTE_VALUE column is one DSL expression. Use this when ATTRIBUTE_NAME itself is the target attribute.",
+      "storage_format": "ATTRIBUTE_NAME = '<targetAttribute>'; ATTRIBUTE_VALUE = '<compiledExpression>'",
+      "do_not_wrap_with_key": true,
+      "when_to_use": [
+        "Adding a normal new attribute row, for example: add attribute gundu with value 123.",
+        "Updating an existing normal attribute value where the full ATTRIBUTE_VALUE is one expression.",
+        "The user does not say inside/within/under an existing composite/container attribute."
+      ],
+      "examples": [
+        {
+          "user_intent": "Add new attribute gundu with value 123",
+          "attribute_name": "gundu",
+          "compiled_expression": "VAL_123",
+          "attribute_value_to_store": "VAL_123",
+          "meaning": "The attribute gundu has static literal value 123.",
+          "wrong_outputs": [
+            "gundu=VAL_123;",
+            "VAL_gundu=123"
+          ]
+        },
+        {
+          "user_intent": "Add new attribute gundu with DTO field allowances.sms.freebies",
+          "attribute_name": "gundu",
+          "compiled_expression": "allowances.sms.freebies",
+          "attribute_value_to_store": "allowances.sms.freebies",
+          "meaning": "The attribute gundu reads from the DTO/source field allowances.sms.freebies.",
+          "wrong_outputs": [
+            "VAL_allowances.sms.freebies",
+            "gundu=allowances.sms.freebies;"
+          ]
+        },
+        {
+          "user_intent": "Add new attribute AddToBillFlagCopy. If addToBill is false set false otherwise true.",
+          "attribute_name": "AddToBillFlagCopy",
+          "compiled_expression": "addToBill#false|false,ELSE|true",
+          "attribute_value_to_store": "addToBill#false|false,ELSE|true",
+          "meaning": "The attribute reads source field addToBill and maps false to false, otherwise true.",
+          "wrong_outputs": [
+            "AddToBillFlagCopy#false|false,ELSE|true",
+            "addToBill#false,ELSE|true",
+            "VAL_false"
+          ]
+        }
+      ]
+    },
+    "container_attribute_row": {
+      "description": "The ATTRIBUTE_VALUE column contains one or more semicolon-delimited key=value segments. Use this when ATTRIBUTE_NAME is a container/composite attribute such as poAttributes or productSpecAttribute_X.",
+      "storage_format": "key1=<compiledExpression1>;key2=<compiledExpression2>;...",
+      "pair_delimiter": ";",
+      "key_value_separator": "=",
+      "requires_trailing_semicolon": true,
+      "when_to_use": [
+        "The user says inside existing poAttributes, inside poAttributes, within poAttributes, under poAttributes, or similar container wording.",
+        "Oracle inspection shows the target ATTRIBUTE_NAME already has a packed key=value;key=value; ATTRIBUTE_VALUE.",
+        "The task is append_subkey or full compound ATTRIBUTE_VALUE generation."
+      ],
+      "append_subkey_rule": {
+        "description": "For append_subkey, the DSL compiler should return only the RHS compiled_expression. The SQL layer later wraps it as append_key=<compiledExpression>; and appends it to the preserved existing ATTRIBUTE_VALUE.",
+        "do_not_include_append_key_in_expression": true,
+        "do_not_include_trailing_semicolon_in_expression": true,
+        "python_wraps_later_as": "<append_key>=<compiledExpression>;",
+        "important": "Even if the sub-key value is a fixed literal, operation_kind remains append_subkey, not fixed_literal, because the storage target is a composite container."
+      },
+      "examples": [
+        {
+          "user_intent": "Add CustomerType with value 123 inside existing poAttributes",
+          "container_attribute_name": "poAttributes",
+          "append_key": "CustomerType",
+          "compiled_expression": "VAL_123",
+          "append_fragment": "CustomerType=VAL_123;",
+          "meaning": "Append sub-key CustomerType whose value is the literal 123.",
+          "wrong_operation_kind": "fixed_literal",
+          "correct_operation_kind": "append_subkey",
+          "wrong_outputs": [
+            "VAL_123 as the whole poAttributes value",
+            "CustomerType=123;",
+            "expression='CustomerType=VAL_123;'"
+          ]
+        },
+        {
+          "user_intent": "Add CustomerType with DTO field customer.type inside existing poAttributes",
+          "container_attribute_name": "poAttributes",
+          "append_key": "CustomerType",
+          "compiled_expression": "customer.type",
+          "append_fragment": "CustomerType=customer.type;",
+          "meaning": "Append sub-key CustomerType whose value is read from DTO/source field customer.type.",
+          "wrong_outputs": [
+            "CustomerType=VAL_customer.type;",
+            "VAL_customer.type"
+          ]
+        },
+        {
+          "user_intent": "Add CustomerType with value if subscriberType is PREPAID show 1 else 0 inside existing poAttributes",
+          "container_attribute_name": "poAttributes",
+          "append_key": "CustomerType",
+          "compiled_expression": "subscriberType#PREPAID|1,ELSE|0",
+          "append_fragment": "CustomerType=subscriberType#PREPAID|1,ELSE|0;",
+          "meaning": "Append sub-key CustomerType whose value is mapped from source field subscriberType.",
+          "wrong_outputs": [
+            "CustomerType#PREPAID|1,ELSE|0",
+            "CustomerType=CustomerType#PREPAID|1,ELSE|0;",
+            "subscriberType#1,ELSE|0"
+          ]
+        },
+        {
+          "user_intent": "Create full compound productSpecAttribute_1 with static attribute name, byte-converted value, and mapped action",
+          "attribute_name": "productSpecAttribute_1",
+          "attribute_value_to_store": "attributeName=VAL_DataSpeed;attributeValue=$BYTE_allowances.dataAllowance.speed^allowances.dataAllowance.speedUOM;attributeAction=status#ACTIVE|Add,INACTIVE|Remove;",
+          "meaning": "A full composite ATTRIBUTE_VALUE with three key=value segments."
+        }
+      ]
+    },
+    "why_shape_selection_matters": [
+      "ATTRIBUTE_NAME already provides the database-level key for normal/atomic rows, so ATTRIBUTE_VALUE should be only the compiled expression such as VAL_123 or allowances.sms.freebies.",
+      "Container attributes such as poAttributes store multiple sub-keys inside the ATTRIBUTE_VALUE string, so they require key=<expression>; fragments.",
+      "The same compiled expression grammar is used in both shapes; only the outer storage shape changes."
+    ]
+  },
+  "expression_grammar": {
+    "prefix_operations_by_family": {
+      "literal_and_spacing": [
+        {
+          "token": "VAL_",
+          "family": "literal_and_spacing",
+          "what_it_does": "Static/literal value. The text after 'VAL_' is returned as-is.",
+          "runtime_algorithm": "attributeValue.substring(4)",
+          "uses_recursive_resolution": false,
+          "example": {
+            "authored_attribute_value": "VAL_ThirdPartySubscriptionIndicator",
+            "runtime_result": "ThirdPartySubscriptionIndicator"
+          }
+        },
+        {
+          "token": "$SPACE_",
+          "family": "literal_and_spacing",
+          "what_it_does": "Returns the text after '$SPACE_' with spaces preserved (no trim applied at post-processing).",
+          "runtime_algorithm": "attributeValue.replace('$SPACE_', ' ')",
+          "uses_recursive_resolution": false,
+          "example": {
+            "authored_attribute_value": "$SPACE_Hello World",
+            "runtime_result": " Hello World"
+          }
+        }
+      ],
+      "context_lookup": [
+        {
+          "token": "$S_",
+          "family": "context_lookup",
+          "what_it_does": "Session variable lookup. Reads value from session_information map using key after '$S_'.",
+          "runtime_algorithm": "session_information.get(attributeValue.substring(3))",
+          "uses_recursive_resolution": false,
+          "example": {
+            "authored_attribute_value": "$S_accountNumber",
+            "runtime_result": "value of session key 'accountNumber'"
+          }
+        },
+        {
+          "token": "$JSONPATH_",
+          "family": "context_lookup",
+          "what_it_does": "Direct JsonPath read. Reads directly from projectDTOJsonValue using the full path after prefix. If result is single-element JSONArray, returns that element as string. Otherwise returns full JSON.",
+          "runtime_algorithm": "JsonPath.read(projectDTOJsonValue, path) => JsonUtil.objectToJson()",
+          "uses_recursive_resolution": false,
+          "example": {
+            "authored_attribute_value": "$JSONPATH_$.offers[?(@.type=='ADDON')].code",
+            "runtime_result": "ADDON_001 (or JSON array if multiple)"
+          }
+        },
+        {
+          "token": "$JSONARRAY_",
+          "family": "context_lookup",
+          "what_it_does": "JSON array read. Reads directly from projectDTOJsonValue using JsonPath. Returns the raw object (typically a list).",
+          "runtime_algorithm": "readJsonPath(projectDTOJsonValue, path)",
+          "uses_recursive_resolution": false,
+          "example": {
+            "authored_attribute_value": "$JSONARRAY_$.items[*].id",
+            "runtime_result": "[1, 2, 3] (raw array object)"
+          }
+        }
+      ],
+      "numeric_and_text_extraction": [
+        {
+          "token": "$NUM_",
+          "family": "numeric_and_text_extraction",
+          "what_it_does": "Numeric extraction. Recursively resolves the remainder, then strips all non-digit characters (keeps '-' and digits).",
+          "runtime_algorithm": "extractNumber(recurse(attributeValue.replace('$NUM_','')))",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$NUM_$.pricing.rate",
+            "runtime_result": "150 (from '150 AED')"
+          },
+          "details": {
+            "regex_rule": "[^-?0-9]+"
+          }
+        },
+        {
+          "token": "$STR_",
+          "family": "numeric_and_text_extraction",
+          "what_it_does": "Alphabetic extraction. Recursively resolves, then strips all non-alpha characters.",
+          "runtime_algorithm": "extractAlpha(recurse(attributeValue.replace('$STR_','')))",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$STR_$.plan.name",
+            "runtime_result": "PlanGold (from 'Plan-Gold 123')"
+          },
+          "details": {
+            "regex_rule": "[^a-zA-Z]+"
+          }
+        }
+      ],
+      "type_conversion": [
+        {
+          "token": "$INT_",
+          "family": "type_conversion",
+          "what_it_does": "Integer conversion. Recursively resolves the remainder, then calls Integer.valueOf().",
+          "runtime_algorithm": "Integer.valueOf(recurse(attributeValue.replace('$INT_','')))",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$INT_$.quantity",
+            "runtime_result": "5 (Integer object)"
+          }
+        },
+        {
+          "token": "$LONG_",
+          "family": "type_conversion",
+          "what_it_does": "Long conversion. Resolves path, applies mapping if $M_ present, converts to Long (handles decimal strings).",
+          "runtime_algorithm": "getValidLong(getinternalMappedValue(mappedvalue, recurse(path)))",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$LONG_$.customer.id",
+            "runtime_result": "123456789 (Long)"
+          }
+        },
+        {
+          "token": "$FLOAT_",
+          "family": "type_conversion",
+          "what_it_does": "Float conversion. Resolves path, converts to Float.",
+          "runtime_algorithm": "Float.valueOf(recurse(path))",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$FLOAT_$.pricing.discount",
+            "runtime_result": "12.5 (Float)"
+          }
+        },
+        {
+          "token": "$DOU_",
+          "family": "type_conversion",
+          "what_it_does": "Double conversion. Resolves path, converts to Double.",
+          "runtime_algorithm": "Double.valueOf(recurse(path))",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$DOU_$.pricing.amount",
+            "runtime_result": "99.99 (Double)"
+          }
+        },
+        {
+          "token": "$SHO_",
+          "family": "type_conversion",
+          "what_it_does": "Short literal. Directly converts the text after '$SHO_' to Short (no recursion).",
+          "runtime_algorithm": "Short.valueOf(attributeValue.substring(5))",
+          "uses_recursive_resolution": false,
+          "example": {
+            "authored_attribute_value": "$SHO_1",
+            "runtime_result": "1 (Short)"
+          }
+        },
+        {
+          "token": "$DEC_",
+          "family": "type_conversion",
+          "what_it_does": "BigDecimal conversion. Resolves path, converts to BigDecimal.",
+          "runtime_algorithm": "getValidBigDecimal(recurse(path))",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$DEC_$.billing.balance",
+            "runtime_result": "1234.56 (BigDecimal)"
+          }
+        },
+        {
+          "token": "$BOOL_",
+          "family": "type_conversion",
+          "what_it_does": "Boolean conversion. Resolves path, converts result to Boolean.",
+          "runtime_algorithm": "Boolean.valueOf(recurse(path))",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$BOOL_$.flags.isActive",
+            "runtime_result": "true (Boolean)"
+          }
+        }
+      ],
+      "calculation": [
+        {
+          "token": "$VATABLE_",
+          "family": "calculation",
+          "what_it_does": "VAT calculation. Resolves the path, then applies 5% VAT (value + value*0.05). Formatted to 2 decimal places.",
+          "runtime_algorithm": "df2.format(value + value * 0.05)",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$VATABLE_$.pricing.baseRate",
+            "runtime_result": "105.00 (from 100.00)"
+          }
+        },
+        {
+          "token": "$DEDUCTPER_",
+          "family": "calculation",
+          "what_it_does": "Percentage deduction. Format: $DEDUCTPER_<percentage>_<path>. Resolves path, deducts given percentage.",
+          "runtime_algorithm": "df2.format(value - (value * percentage/100))",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$DEDUCTPER_10_$.pricing.total",
+            "runtime_result": "90.00 (10% deducted from 100.00)"
+          },
+          "details": {
+            "parameter_separator": "_"
+          }
+        }
+      ],
+      "composition": [
+        {
+          "token": "$CONCAT_",
+          "family": "composition",
+          "what_it_does": "Concatenation. Splits remainder by semicolons, recursively resolves each part, concatenates all results.",
+          "runtime_algorithm": "StringBuilder joining recurse(each part split by ';')",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$CONCAT_VAL_Hello;$S_name;VAL_!",
+            "runtime_result": "HelloJohn! (if session name='John')"
+          },
+          "details": {
+            "parameter_separator": ";"
+          }
+        },
+        {
+          "token": "$MAP_",
+          "family": "composition",
+          "what_it_does": "Map builder. Creates a key-value Map. Semicolons separate entries, equals separates key from value. Both sides are recursively resolved.",
+          "runtime_algorithm": "for each pair split by ';': key=recurse(left of '='), val=recurse(right of '='). Return Map.",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$MAP_VAL_type=$.plan.type;VAL_code=$.plan.code",
+            "runtime_result": "{type: 'postpaid', code: 'P100'}"
+          },
+          "details": {
+            "parameter_separators": [
+              ";",
+              "="
+            ]
+          }
+        }
+      ],
+      "unit_conversion": [
+        {
+          "token": "$BYTE_",
+          "family": "unit_conversion",
+          "what_it_does": "Data-to-bytes conversion. Format: $BYTE_<numberPath>^<uomPath>. Resolves both, converts to bytes based on UOM (TB/GB/MB/KB).",
+          "runtime_algorithm": "calculateDataInBytes(recurse(numberPath), recurse(uomPath))",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$BYTE_$.data.amount^$.data.unit",
+            "runtime_result": "1048576000 (1 GB in bytes)"
+          },
+          "details": {
+            "parameter_separator": "^",
+            "conversion_rules": {
+              "TB": "value * 1000 * 1000 * 1000 * 1024",
+              "GB": "value * 1000 * 1000 * 1024",
+              "MB": "value * 1000 * 1024",
+              "KB": "value * 1024",
+              "default": "Long.parseLong(value)"
+            }
+          }
+        },
+        {
+          "token": "$KBYTE_",
+          "family": "unit_conversion",
+          "what_it_does": "Data-to-kilobytes conversion. Format: $KBYTE_<numberPath>^<uomPath>. Same as $BYTE_ but result in KB.",
+          "runtime_algorithm": "calculateDataInKBytes(recurse(numberPath), recurse(uomPath))",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$KBYTE_$.data.amount^$.data.unit",
+            "runtime_result": "1048576 (1 GB in KB)"
+          },
+          "details": {
+            "parameter_separator": "^",
+            "conversion_rules": {
+              "TB": "value * 1000 * 1000 * 1024",
+              "GB": "value * 1000 * 1024",
+              "MB": "value * 1024",
+              "default": "Long.parseLong(value)"
+            }
+          }
+        },
+        {
+          "token": "$SEC_",
+          "family": "unit_conversion",
+          "what_it_does": "Time-to-seconds conversion. Format: $SEC_<numberPath>^<uomPath>.",
+          "runtime_algorithm": "getValueInSec(recurse(numberPath), recurse(uomPath))",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$SEC_$.validity.amount^$.validity.unit",
+            "runtime_result": "86400 (1 day in seconds)"
+          },
+          "details": {
+            "parameter_separator": "^",
+            "conversion_rules": {
+              "MINS": "value * 60",
+              "DAYS": "value * 24 * 60 * 60"
+            }
+          }
+        },
+        {
+          "token": "$HOUR_",
+          "family": "unit_conversion",
+          "what_it_does": "Time-to-hours conversion. Format: $HOUR_<numberPath>^<uomPath>.",
+          "runtime_algorithm": "getValueInHour(recurse(numberPath), recurse(uomPath))",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$HOUR_$.validity.amount^$.validity.unit",
+            "runtime_result": "24.0 (1 day in hours)"
+          },
+          "details": {
+            "parameter_separator": "^",
+            "conversion_rules": {
+              "SECONDS": "value / 3600",
+              "MINS": "value / 60",
+              "DAYS": "value * 24"
+            }
+          }
+        }
+      ],
+      "multi_value_boolean_checks": [
+        {
+          "token": "$ANYVALID_",
+          "family": "multi_value_boolean_checks",
+          "what_it_does": "Any-valid check. Pipes-separated paths are resolved in order. Returns 'true' if ANY resolves to a valid (non-null, non-empty) value, else 'false'. Optional #mapping suffix.",
+          "runtime_algorithm": "for each path split by '|': if recurse(path) is valid => 'true'; else => 'false'. Optional doMapping.",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$ANYVALID_$.path1|$.path2#true|Y,false|N",
+            "runtime_result": "Y (if path1 or path2 has a value)"
+          },
+          "details": {
+            "parameter_separator": "|",
+            "mapping_marker": "#"
+          }
+        },
+        {
+          "token": "$ANYVALIDVAL_",
+          "family": "multi_value_boolean_checks",
+          "what_it_does": "Any-valid-value. Like $ANYVALID_ but returns the ACTUAL first valid value found (not 'true'/'false').",
+          "runtime_algorithm": "for each path split by '|': if recurse(path) is valid => return that value. Optional doMapping.",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$ANYVALIDVAL_$.primary.name|$.secondary.name",
+            "runtime_result": "John (first non-null value found)"
+          },
+          "details": {
+            "parameter_separator": "|",
+            "mapping_marker": "#"
+          }
+        },
+        {
+          "token": "$ANYVALIDB_",
+          "family": "multi_value_boolean_checks",
+          "what_it_does": "Any-valid binary. Like $ANYVALID_ but returns '1' if any valid, '0' otherwise (no mapping support).",
+          "runtime_algorithm": "for each path split by '|': if recurse(path) is valid => '1'; else => '0'",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$ANYVALIDB_$.path1|$.path2",
+            "runtime_result": "1 or 0"
+          },
+          "details": {
+            "parameter_separator": "|"
+          }
+        },
+        {
+          "token": "$ANYTRUE_",
+          "family": "multi_value_boolean_checks",
+          "what_it_does": "Any-true boolean OR. Resolves each pipe-separated path. If ANY returns Boolean true => '1', else '0'. Optional #mapping.",
+          "runtime_algorithm": "for each path split by '|': if Boolean.valueOf(recurse(path)) => '1'; else => '0'. Optional doMapping.",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$ANYTRUE_$.flags.active|$.flags.enabled#1|YES,0|NO",
+            "runtime_result": "YES (if any flag is true)"
+          },
+          "details": {
+            "parameter_separator": "|",
+            "mapping_marker": "#"
+          }
+        },
+        {
+          "token": "$ALLTRUE_",
+          "family": "multi_value_boolean_checks",
+          "what_it_does": "All-true boolean AND. Resolves each pipe-separated path. If ALL return Boolean true => '1', else '0'. Optional #mapping.",
+          "runtime_algorithm": "for each path split by '|': if ALL Boolean.valueOf(recurse(path)) => '1'; else => '0'. Optional doMapping.",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$ALLTRUE_$.flags.active|$.flags.verified",
+            "runtime_result": "1 (only if both are true)"
+          },
+          "details": {
+            "parameter_separator": "|",
+            "mapping_marker": "#"
+          }
+        }
+      ],
+      "date_time": [
+        {
+          "token": "$DATE_",
+          "family": "date_time",
+          "what_it_does": "Date parsing. Resolves path to a date string, parses using formats: ['MMM d, yyyy HH:mm:ss a', 'dd-MM-yyyy', 'dd/MM/yyyy', 'dd-MMM-yyyy']. Returns Date object.",
+          "runtime_algorithm": "parseDateString(recurse(path), DATE_FORMATS)",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$DATE_$.subscription.startDate",
+            "runtime_result": "Date object"
+          },
+          "details": {
+            "accepted_formats": [
+              "MMM d, yyyy HH:mm:ss a",
+              "dd-MM-yyyy",
+              "dd/MM/yyyy",
+              "dd-MMM-yyyy"
+            ]
+          }
+        },
+        {
+          "token": "$DATEFORMAT_",
+          "family": "date_time",
+          "what_it_does": "Date formatting. Format: $DATEFORMAT_<outputFormat>^<path>. Resolves path (must resolve to Date), formats with given pattern.",
+          "runtime_algorithm": "formatDateToString(recurse(path) as Date, format, null)",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$DATEFORMAT_yyyy-MM-dd^$DATE_$.startDate",
+            "runtime_result": "2024-01-15"
+          },
+          "details": {
+            "parameter_separator": "^",
+            "implementation_note": "substring(13) is used — the underscore after 'DATEFORMAT' is included in the 12-char prefix"
+          }
+        },
+        {
+          "token": "$FORMATDATE_",
+          "family": "date_time",
+          "what_it_does": "Date re-formatting. Format: $FORMATDATE_<inputFormat>$<path>$<outputFormat>. Parses date string from path using inputFormat, then formats to outputFormat.",
+          "runtime_algorithm": "SimpleDateFormat(inputFormat).parse(recurse(path)) => SimpleDateFormat(outputFormat).format()",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$FORMATDATE_dd-MM-yyyy$$.subscription.date$yyyy/MM/dd",
+            "runtime_result": "2024/01/15 (reformatted from 15-01-2024)"
+          },
+          "details": {
+            "parameter_separator": "$"
+          }
+        },
+        {
+          "token": "$NOW_",
+          "family": "date_time",
+          "what_it_does": "Current date/time. Text after '$NOW_' is the output format pattern. Returns formatted current timestamp.",
+          "runtime_algorithm": "formatDateToString(Calendar.getInstance().getTime(), format, null)",
+          "uses_recursive_resolution": false,
+          "example": {
+            "authored_attribute_value": "$NOW_yyyy-MM-dd HH:mm:ss",
+            "runtime_result": "2024-06-15 14:30:00 (current time)"
+          }
+        }
+      ],
+      "text_formatting": [
+        {
+          "token": "$CAMEL_",
+          "family": "text_formatting",
+          "what_it_does": "Camel/Title case conversion. Resolves path, converts each word to Title Case (first char uppercase, rest lowercase).",
+          "runtime_algorithm": "convertToCamelCase(recurse(path))",
+          "uses_recursive_resolution": true,
+          "example": {
+            "authored_attribute_value": "$CAMEL_$.customer.fullName",
+            "runtime_result": "John Smith (from 'john smith' or 'JOHN SMITH')"
+          },
+          "details": {
+            "implementation_note": "Skips conversion if result starts with '$'"
+          }
+        }
+      ]
+    },
+    "complex_function_calls": {
+      "detection": {
+        "rule": "When no known prefix matches, the code checks for 'complex methods' using regex pattern '^\\$[^_]+_'. These are methods applied AFTER the remaining path is resolved.",
+        "regex": "^\\$[^_]+_"
+      },
+      "methods": [
+        {
+          "call_name": "$REPLACE",
+          "what_it_does": "String replacement. Params: ('oldText', 'newText'). Resolves the path after method prefix, then replaces occurrences.",
+          "authoring_format": "$REPLACE('old','new')<path>",
+          "runtime_algorithm": "recurse(path).replace(param1, param2)",
+          "example": {
+            "authored_attribute_value": "$REPLACE(' ','_')$.customer.name",
+            "runtime_result": "John_Smith (from 'John Smith')"
+          }
+        },
+        {
+          "call_name": "$LIST",
+          "what_it_does": "Split to list. Params: ('delimiter'). Resolves the path, splits result by delimiter, returns as List.",
+          "authoring_format": "$LIST('delimiter')<path>",
+          "runtime_algorithm": "recurse(path).split(param) => Arrays.asList()",
+          "example": {
+            "authored_attribute_value": "$LIST(',')$.tags",
+            "runtime_result": "['tag1', 'tag2', 'tag3'] (List)"
+          }
+        },
+        {
+          "call_name": "$MATH",
+          "what_it_does": "Arithmetic operation. Params: ('operator', 'operand'). Resolves path, performs math. If operand starts with '$', it is also resolved.",
+          "authoring_format": "$MATH('op','value')<path>",
+          "runtime_algorithm": "calculate(op, val, recurse(path))",
+          "example": {
+            "authored_attribute_value": "$MATH('+','10')$.pricing.base",
+            "runtime_result": "110.0 (100 + 10)"
+          },
+          "details": {
+            "allowed_operators": [
+              "+",
+              "-",
+              "*"
+            ],
+            "implementation_note": "If second param starts with '$', it is recursively resolved (without the $ prefix)"
+          }
+        },
+        {
+          "call_name": "$INDEX",
+          "what_it_does": "List index access. Params: ('index', optional 'mapping'). Resolves path (must return List), accesses element at index. Optional second param applies mapping.",
+          "authoring_format": "$INDEX('0')<path> or $INDEX('0','mapping')<path>",
+          "runtime_algorithm": "recurse(path).get(Integer.valueOf(index)). Optional doMapping on result.",
+          "example": {
+            "authored_attribute_value": "$INDEX('0')$LIST(',')$.services",
+            "runtime_result": "firstService (first element of comma-split list)"
+          }
+        },
+        {
+          "call_name": "$XOR",
+          "what_it_does": "Boolean XOR. Params: ('secondBooleanPath', optional 'mapping'). Resolves path, XORs with second boolean. If second starts with '$', resolved.",
+          "authoring_format": "$XOR('$otherPath')<path>",
+          "runtime_algorithm": "Boolean.valueOf(recurse(path)) ^ Boolean.valueOf(recurse(secondSide)). Optional doMapping.",
+          "example": {
+            "authored_attribute_value": "$XOR('$S_flag1')$.flags.flag2",
+            "runtime_result": "true (if exactly one is true)"
+          }
+        }
+      ]
+    },
+    "fallback_source_path_resolution": {
+      "description": "If no prefix matches and no complex method detected, the value is treated as a direct JsonPath expression against projectDTOJsonValue.",
+      "steps": [
+        "1. Check for '#' separator → split into path and mapping expression",
+        "2. Check for '+' separator → AND boolean logic: resolve each path, Boolean.valueOf each, AND all together",
+        "3. Otherwise → readJsonPath(projectDTOJsonValue, attributeValue)",
+        "4. Convert JSON arrays to comma-separated string via arrayToComaString()",
+        "5. Apply mapping via getinternalMappedValue() if '#' was found",
+        "6. If result starts with '$EVAL_' → recursively resolve the remainder"
+      ],
+      "example_input": "$.pricing.recurringCharge",
+      "example_output": "the value at that JSON path in the source DTO"
+    },
+    "global_expression_modifiers": {
+      "$M_suffix": {
+        "description": "Pre-processing modifier. If attributeValue contains '$M_', it splits: left side becomes the new attributeValue, right side becomes the mapping to apply AFTER resolution.",
+        "format": "<expression>$M_<mappingExpression>",
+        "example": "$.status$M_ACTIVE|1,INACTIVE|0"
+      }
+    },
+    "post_resolution_cleanup": {
+      "trim": "All String results are trimmed UNLESS prefix was '$SPACE'",
+      "coma_replacement": "All occurrences of literal '$COMA$' in String results are replaced with ','",
+      "purpose": "Use $COMA$ in values where a literal comma is needed but would otherwise be interpreted as a delimiter"
+    }
+  },
+  "delimiter_and_mapping_rules": {
+    "composite_value_syntax": {
+      "format": "key1=value1;key2=value2;...;keyN=valueN;",
+      "primary_delimiter": ";",
+      "key_value_separator": "=",
+      "note": "Each key=value pair within ATTRIBUTE_VALUE uses semicolons as pair separators and equals as key-value separators.",
+      "trailing_semicolon": "Yes, typically ends with semicolon",
+      "applies_to": "composite_key_value_expression only",
+      "not_for_atomic_values": "Atomic rows store only the compiled expression, for example VAL_123 or allowances.sms.freebies."
+    },
+    "delimiter_roles": [
+      {
+        "character": ";",
+        "purpose": "Primary pair separator in ATTRIBUTE_VALUE. Also used as part separator in $CONCAT_ expressions.",
+        "context": "Top-level separation of attribute pairs"
+      },
+      {
+        "character": "=",
+        "purpose": "Separates attribute key from its resolution expression within a pair.",
+        "context": "Inside each semicolon-delimited segment"
+      },
+      {
+        "character": "#",
+        "purpose": "Mapping/conditional separator. Left side is the path/expression, right side is the mapping rules.",
+        "context": "After a JSON path expression to apply value transformation"
+      },
+      {
+        "character": "|",
+        "purpose": "Multiple uses: (1) Separates alternatives in $ANYVALID_/$ANYTRUE_ etc. (2) Separates condition from result in mapping expressions (old|new).",
+        "context": "Inside mapping expressions and multi-path checks"
+      },
+      {
+        "character": ",",
+        "purpose": "Separates multiple mapping entries in a mapping expression.",
+        "context": "Inside '#' mapping: 'val1|result1,val2|result2,ELSE|default'"
+      },
+      {
+        "character": "^",
+        "purpose": "Separates compound parameters (e.g., number^uom in $BYTE_, format^path in $DATEFORMAT_).",
+        "context": "Inside $BYTE_, $KBYTE_, $SEC_, $HOUR_, $DATEFORMAT_ prefixes"
+      },
+      {
+        "character": "$",
+        "purpose": "Prefix indicator for DSL tokens AND separator in $FORMATDATE_ expressions.",
+        "context": "Always starts a dynamic token ($S_, $NUM_, etc.)"
+      }
+    ],
+    "conditional_mapping": {
+      "format": "condition1|result1,condition2|result2,ELSE|defaultResult",
+      "rules": [
+        "Conditions are matched case-insensitively against the resolved value",
+        "'null' (literal string) matches when resolved value is Java null",
+        "'ELSE' is a wildcard catch-all that matches anything",
+        "If result starts with '$EVAL_', the remainder is recursively resolved as a new expression",
+        "If result is '$SKIP', null is returned (used to intentionally omit the attribute)",
+        "If no condition matches, the original resolved value is returned unchanged",
+        "Chained mappings use '#' separator: 'firstMapping#secondMapping' — second mapping is appended as tail to result of first"
+      ],
+      "multi_level_mapping_example": "promoCard#false|$EVAL_VAL_DISCOUNT_FRAMEWORK,true|$EVAL_cardType#THUKHER|THUKHAR,ESAAD|ESAAD"
+    },
+    "special_result_tokens": {
+      "$EVAL_": "When a mapping result starts with this, strip it and recursively resolve the remainder through getCorrespondingAttributeValue",
+      "$SKIP": "Return null — signals that this attribute should be excluded from the final output",
+      "$COMA$": "Literal comma placeholder. Replaced with ',' in post-processing. Use when a comma is part of data, not a delimiter.",
+      "$SPACE_": "Preserves spaces and skips trim in post-processing"
+    }
+  },
+  "runtime_edge_cases": {
+    "null_or_empty_input": {
+      "behavior": "If attributeValue is null or empty string, method returns null immediately",
+      "check": "isValidObject() returns false for null or empty string ''"
+    },
+    "json_path_not_found": {
+      "behavior": "readJsonPath() catches all exceptions and returns null. The attribute will have null value.",
+      "logging": "Logs 'path X was not available in provided JSON Ignoring the value' at DEBUG level"
+    },
+    "mapping_no_match": {
+      "behavior": "If no mapping condition matches (and no ELSE), getMappedValue returns the ORIGINAL resolved value unchanged",
+      "logging": "Logs error 'wrong Mapping for value [...] and mapping options [...]'"
+    },
+    "null_session_variable": {
+      "behavior": "If $S_ key not found in session map, returns null",
+      "note": "session_information.get() returns null, which is preserved"
+    },
+    "type_conversion_failure": {
+      "$INT_": "Throws NumberFormatException if resolved value is not numeric",
+      "$LONG_": "Returns null if getValidLong fails",
+      "$FLOAT_": "Returns null if input is null",
+      "$DEC_": "Returns null if input is null"
+    },
+    "array_handling": {
+      "behavior": "If JsonPath returns a JSON array like '[val1, val2]', arrayToComaString converts it to 'val1,val2'",
+      "single_element_jsonpath": "For $JSONPATH_, if JSONArray has exactly 1 element, returns just that element as string"
+    },
+    "boolean_evaluation": {
+      "$ANYTRUE_/$ALLTRUE_": "Uses Boolean.valueOf() which returns false for any string that is not exactly 'true' (case-insensitive)",
+      "plus_operator": "When attributeValue contains '+', each segment is resolved and AND-ed together as booleans"
+    },
+    "$BYTE_and_$SEC_null_guard": {
+      "behavior": "$SEC_ and $HOUR_ check isValidObject(number) before conversion. If number is null/empty, value remains null.",
+      "$BYTE_/$KBYTE_": "No null guard — will throw NPE if number or uom resolves to null"
+    },
+    "recursive_depth": {
+      "note": "No explicit recursion limit. Circular references (e.g., $EVAL_ pointing to itself) will cause StackOverflowError."
+    },
+    "$CAMEL_skip_condition": {
+      "behavior": "If resolved value starts with '$', convertToCamelCase is skipped (value returned as-is). This prevents corrupting unresolved tokens."
+    }
+  },
+  "advisor_generation_policy": {
+    "compiler_mission": [
+      "Compile only the RHS ATTRIBUTE_VALUE expression, never SQL.",
+      "For append operations, compile only the value side. The SQL layer wraps append_key=<compiledExpression>; later.",
+      "Never guess PARAM_ID. Add-attribute SQL must stay draft-only until a real unused PARAM_ID is supplied.",
+      "Use deterministic rules first. Use LLM only to interpret ambiguous human wording, not to invent syntax."
+    ],
+    "literal_vs_source_field": [
+      "Use VAL_ only when the user provides a static literal value.",
+      "Do not wrap DTO/source field paths with VAL_. A path such as allowances.sms.freebies must remain a path.",
+      "For conditional requests, build a mapping expression instead of choosing one branch as a literal."
+    ],
+    "mapping_slot_rules": [
+      "Mapping syntax uses sourceField#conditionValue|resultValue,ELSE|elseValue.",
+      "The source field is the field being tested after 'if' or 'when'.",
+      "Do not use the target ATTRIBUTE_NAME or append key as the mapping source field.",
+      "Do not omit the condition value."
+    ],
+    "append_subkey_rules": [
+      "If the user says inside/within/under an existing container such as poAttributes, compile as append_subkey.",
+      "The compiled expression should not include the append key and should not include the trailing semicolon.",
+      "A literal append value still uses operation_kind append_subkey at the advisor level, while its value expression may be VAL_<literal>."
+    ],
+    "safety_defaults": [
+      "When exact syntax cannot be confirmed, return unsupported instead of guessing.",
+      "Preserve current composite ATTRIBUTE_VALUE exactly and append only the new segment.",
+      "Generate rollback SQL using the exact value captured before update."
+    ],
+    "original_generation_guidelines_translated": [
+      "1. Identify what runtime values are needed (from JSON path, session, or static)",
+      "2. Choose the appropriate prefix for each value based on required type/transformation",
+      "3. Structure as semicolon-separated key=value pairs if compound",
+      "4. Use '#' after a JSON path to add conditional mapping (condition|result,...)",
+      "5. Use 'ELSE|$SKIP' when the attribute should be excluded if no condition matches",
+      "6. Use 'VAL_' for any static/literal text that should not be resolved from JSON",
+      "7. Use '$CONCAT_' with ';' separators when combining multiple resolved values",
+      "8. Use '$M_' suffix BEFORE processing when you need to map the ENTIRE expression's result",
+      "9. Always end compound ATTRIBUTE_VALUE strings with a trailing semicolon"
+    ],
+    "common_authoring_patterns": {
+      "static_attribute_with_dynamic_value": "attributeName=VAL_<StaticName>;attributeValueString=<jsonPath>;",
+      "conditional_value": "<jsonPath>#<val1>|<result1>,<val2>|<result2>,ELSE|<default>;",
+      "type_converted_value": "$<TYPE>_<jsonPath>",
+      "session_variable": "$S_<sessionKey>",
+      "boolean_check_mapped": "$ANYVALID_<path1>|<path2>#true|<trueResult>,false|<falseResult>",
+      "skip_if_no_match": "<path>#<conditions>,ELSE|$SKIP"
+    }
+  },
+  "compiler_examples": {
+    "storage_shape_examples": {
+      "normal_attribute_row": [
+        {
+          "user_intent": "Add new attribute gundu with value 123",
+          "attribute_name": "gundu",
+          "compiled_expression": "VAL_123",
+          "attribute_value_to_store": "VAL_123",
+          "meaning": "The attribute gundu has static literal value 123.",
+          "wrong_outputs": [
+            "gundu=VAL_123;",
+            "VAL_gundu=123"
+          ]
+        },
+        {
+          "user_intent": "Add new attribute gundu with DTO field allowances.sms.freebies",
+          "attribute_name": "gundu",
+          "compiled_expression": "allowances.sms.freebies",
+          "attribute_value_to_store": "allowances.sms.freebies",
+          "meaning": "The attribute gundu reads from the DTO/source field allowances.sms.freebies.",
+          "wrong_outputs": [
+            "VAL_allowances.sms.freebies",
+            "gundu=allowances.sms.freebies;"
+          ]
+        },
+        {
+          "user_intent": "Add new attribute AddToBillFlagCopy. If addToBill is false set false otherwise true.",
+          "attribute_name": "AddToBillFlagCopy",
+          "compiled_expression": "addToBill#false|false,ELSE|true",
+          "attribute_value_to_store": "addToBill#false|false,ELSE|true",
+          "meaning": "The attribute reads source field addToBill and maps false to false, otherwise true.",
+          "wrong_outputs": [
+            "AddToBillFlagCopy#false|false,ELSE|true",
+            "addToBill#false,ELSE|true",
+            "VAL_false"
+          ]
+        }
+      ],
+      "container_attribute_row": [
+        {
+          "user_intent": "Add CustomerType with value 123 inside existing poAttributes",
+          "container_attribute_name": "poAttributes",
+          "append_key": "CustomerType",
+          "compiled_expression": "VAL_123",
+          "append_fragment": "CustomerType=VAL_123;",
+          "meaning": "Append sub-key CustomerType whose value is the literal 123.",
+          "wrong_operation_kind": "fixed_literal",
+          "correct_operation_kind": "append_subkey",
+          "wrong_outputs": [
+            "VAL_123 as the whole poAttributes value",
+            "CustomerType=123;",
+            "expression='CustomerType=VAL_123;'"
+          ]
+        },
+        {
+          "user_intent": "Add CustomerType with DTO field customer.type inside existing poAttributes",
+          "container_attribute_name": "poAttributes",
+          "append_key": "CustomerType",
+          "compiled_expression": "customer.type",
+          "append_fragment": "CustomerType=customer.type;",
+          "meaning": "Append sub-key CustomerType whose value is read from DTO/source field customer.type.",
+          "wrong_outputs": [
+            "CustomerType=VAL_customer.type;",
+            "VAL_customer.type"
+          ]
+        },
+        {
+          "user_intent": "Add CustomerType with value if subscriberType is PREPAID show 1 else 0 inside existing poAttributes",
+          "container_attribute_name": "poAttributes",
+          "append_key": "CustomerType",
+          "compiled_expression": "subscriberType#PREPAID|1,ELSE|0",
+          "append_fragment": "CustomerType=subscriberType#PREPAID|1,ELSE|0;",
+          "meaning": "Append sub-key CustomerType whose value is mapped from source field subscriberType.",
+          "wrong_outputs": [
+            "CustomerType#PREPAID|1,ELSE|0",
+            "CustomerType=CustomerType#PREPAID|1,ELSE|0;",
+            "subscriberType#1,ELSE|0"
+          ]
+        },
+        {
+          "user_intent": "Create full compound productSpecAttribute_1 with static attribute name, byte-converted value, and mapped action",
+          "attribute_name": "productSpecAttribute_1",
+          "attribute_value_to_store": "attributeName=VAL_DataSpeed;attributeValue=$BYTE_allowances.dataAllowance.speed^allowances.dataAllowance.speedUOM;attributeAction=status#ACTIVE|Add,INACTIVE|Remove;",
+          "meaning": "A full composite ATTRIBUTE_VALUE with three key=value segments."
+        }
+      ]
+    },
+    "runtime_resolution_examples": [
+      {
+        "id": 1,
+        "scenario": "Simple JSON path read for one-time GL code",
+        "attribute_name": "oneTimeGLCode",
+        "source_json_path": "$.GLCodeOTC",
+        "processing_description": "Direct JSON path resolution. No prefix, no mapping. The raw value at path 'GLCodeOTC' is read from the source DTO JSON.",
+        "attribute_value_string": "GLCodeOTC",
+        "resolution_trace": [
+          "1. No known prefix detected",
+          "2. No complex method detected by regex",
+          "3. No '#' found (no mapping)",
+          "4. No '+' found (no boolean AND)",
+          "5. readJsonPath(projectDTOJsonValue, 'GLCodeOTC') → returns the value",
+          "6. arrayToComaString() → passes through if not an array",
+          "7. Post-processing: trim + $COMA$ replacement"
+        ]
+      },
+      {
+        "id": 2,
+        "scenario": "Simple JSON path read for recurring charge rate",
+        "attribute_name": "recurringChargeRate",
+        "source_json_path": "$.rental",
+        "processing_description": "Direct JSON path resolution. Reads 'rental' value from source DTO.",
+        "attribute_value_string": "rental",
+        "resolution_trace": [
+          "1. No known prefix detected",
+          "2. Fallback to readJsonPath(projectDTOJsonValue, 'rental')",
+          "3. Returns the numeric/string value directly"
+        ]
+      },
+      {
+        "id": 3,
+        "scenario": "Simple JSON path read for accrual code",
+        "attribute_name": "recChargeAccuralCode",
+        "source_json_path": "$.GLCodeAdv",
+        "processing_description": "Direct JSON path resolution for GLCodeAdv.",
+        "attribute_value_string": "GLCodeAdv",
+        "resolution_trace": [
+          "1. No known prefix detected",
+          "2. Fallback to readJsonPath(projectDTOJsonValue, 'GLCodeAdv')",
+          "3. Returns value at that path"
+        ]
+      },
+      {
+        "id": 4,
+        "scenario": "Conditional mapping with ELSE and $SKIP",
+        "attribute_name": "offerCategory",
+        "source_json_path": "$.code",
+        "processing_description": "Read 'code' from JSON. Apply mapping: FREE→passFreeSubscription, DISCOUNTED→passWhitelistedApps, anything else→$SKIP (excluded).",
+        "attribute_value_string": "code#FREE|passFreeSubscription,DISCOUNTED|passWhitelistedApps,ELSE|$SKIP",
+        "resolution_trace": [
+          "1. No known prefix detected",
+          "2. No complex method detected",
+          "3. '#' found → split: attributeValue='code', mappedvalue='FREE|passFreeSubscription,DISCOUNTED|passWhitelistedApps,ELSE|$SKIP'",
+          "4. readJsonPath(projectDTOJsonValue, 'code') → e.g., 'FREE'",
+          "5. arrayToComaString() → passes through",
+          "6. getinternalMappedValue('FREE|passFreeSubscription,DISCOUNTED|passWhitelistedApps,ELSE|$SKIP', 'FREE')",
+          "7. getMappedValue('FREE', mapping) → iterates: 'FREE' matches 'FREE' → returns 'passFreeSubscription'",
+          "8. If code was 'OTHER', ELSE matches → returns '$SKIP' → null (attribute excluded)"
+        ],
+        "database_insert_context": "Used as part of a multi-pair ATTRIBUTE_VALUE: code=passCategory#FREE|passFreeSubscription,DISCOUNTED|passWhitelistedApps,ELSE|$SKIP;"
+      },
+      {
+        "id": 5,
+        "scenario": "Compound attribute with static name and dynamic value path",
+        "attribute_name": "productSpecAttribute_2",
+        "template_id": "POSTPAID_PSM_ADDON_OT_MT",
+        "processing_description": "The ATTRIBUTE_VALUE contains TWO pairs: (1) attributeName=static literal 'ThirdPartySubscriptionIndicator', (2) attributeValueString=JSON path to resolve.",
+        "attribute_value_string": "attributeName=VAL_ThirdPartySubscriptionIndicator;attributeValueString=allowances.otherAllowances.thirdPartySubscription.enabled;",
+        "resolution_trace": [
+          "1. Full ATTRIBUTE_VALUE is split by ';' into pairs",
+          "2. Pair 1: key='attributeName', value='VAL_ThirdPartySubscriptionIndicator'",
+          "   → VAL_ prefix: returns literal 'ThirdPartySubscriptionIndicator'",
+          "3. Pair 2: key='attributeValueString', value='allowances.otherAllowances.thirdPartySubscription.enabled'",
+          "   → No prefix: treated as JSON path → readJsonPath() → returns 'true'/'false'/value"
+        ],
+        "sql_insert": "Insert into ACT_MEDIATION_PARAMETER (ATTRIBUTE_NAME,TEMPLATE_ID,ATTRIBUTE_VALUE) values ('productSpecAttribute_2','POSTPAID_PSM_ADDON_OT_MT','attributeName=VAL_ThirdPartySubscriptionIndicator;attributeValueString=allowances.otherAllowances.thirdPartySubscription.enabled;')"
+      },
+      {
+        "id": 6,
+        "scenario": "Session variable with integer conversion",
+        "attribute_name": "subscriberId",
+        "processing_description": "Read 'subscriberId' from session, convert to Integer.",
+        "attribute_value_string": "$INT_$S_subscriberId",
+        "resolution_trace": [
+          "1. Prefix '$INT_' detected → remainder = '$S_subscriberId'",
+          "2. Recurse: '$S_' prefix detected → session_information.get('subscriberId') → '12345'",
+          "3. Back in $INT_: Integer.valueOf('12345') → 12345 (Integer)"
+        ]
+      },
+      {
+        "id": 7,
+        "scenario": "Concatenation of static and dynamic values",
+        "attribute_name": "displayName",
+        "processing_description": "Concatenate literal 'Plan-' with the plan name from JSON.",
+        "attribute_value_string": "$CONCAT_VAL_Plan-;planName",
+        "resolution_trace": [
+          "1. Prefix '$CONCAT_' detected → remainder = 'VAL_Plan-;planName'",
+          "2. Split by ';' → ['VAL_Plan-', 'planName']",
+          "3. Recurse part 1: 'VAL_Plan-' → 'Plan-'",
+          "4. Recurse part 2: 'planName' → readJsonPath → 'Gold100'",
+          "5. StringBuilder: 'Plan-' + 'Gold100' = 'Plan-Gold100'"
+        ]
+      },
+      {
+        "id": 8,
+        "scenario": "Data conversion with unit of measure",
+        "attribute_name": "dataAllowanceBytes",
+        "processing_description": "Read data amount and unit, convert to bytes.",
+        "attribute_value_string": "$BYTE_dataAmount^dataUOM",
+        "resolution_trace": [
+          "1. Prefix '$BYTE_' detected → remainder = 'dataAmount^dataUOM'",
+          "2. Split by '^' → ['dataAmount', 'dataUOM']",
+          "3. Recurse 'dataAmount' → readJsonPath → '2'",
+          "4. Recurse 'dataUOM' → readJsonPath → 'GB'",
+          "5. calculateDataInBytes('2', 'GB') → 2 * 1000 * 1000 * 1024 = 2048000000"
+        ]
+      },
+      {
+        "id": 9,
+        "scenario": "Boolean check with mapping to Y/N",
+        "attribute_name": "hasActiveService",
+        "processing_description": "Check if any of two JSON paths has a valid value. Map result to Y or N.",
+        "attribute_value_string": "$ANYVALID_$.services.mobile|$.services.fixed#true|Y,false|N",
+        "resolution_trace": [
+          "1. Prefix '$ANYVALID_' detected → remainder has '#' → split: paths='$.services.mobile|$.services.fixed', mapping='true|Y,false|N'",
+          "2. Split paths by '|' → ['$.services.mobile', '$.services.fixed']",
+          "3. Loop: recurse '$.services.mobile' → found valid value → result = 'true'",
+          "4. doMapping('true', 'true|Y,false|N', ...) → getMappedValue → 'Y'"
+        ]
+      },
+      {
+        "id": 10,
+        "scenario": "Math operation on resolved value",
+        "attribute_name": "adjustedPrice",
+        "processing_description": "Read base price from JSON, add 5 to it.",
+        "attribute_value_string": "$MATH('+','5')$.pricing.basePrice",
+        "resolution_trace": [
+          "1. extractAttributeMethod detects '$MATH' pattern",
+          "2. Remainder after method removal: '$.pricing.basePrice'",
+          "3. Recurse: readJsonPath → '100'",
+          "4. extractMethodParams('$MATH(\\'+\\',\\'5\\')') → ['+', '5']",
+          "5. calculate('+', '5', '100') → Float 100 + 5 = '105.0'"
+        ]
+      },
+      {
+        "id": 11,
+        "scenario": "Recursive $EVAL_ in mapping result",
+        "attribute_name": "promoCardType",
+        "processing_description": "Read promoCard boolean, map false to a recursively evaluated expression, true to another.",
+        "attribute_value_string": "promoCard#false|$EVAL_VAL_DISCOUNT_FRAMEWORK,true|$EVAL_cardType#THUKHER|THUKHAR,ESAAD|ESAAD",
+        "resolution_trace": [
+          "1. No prefix → '#' found → attributeValue='promoCard', mappedvalue='false|$EVAL_VAL_DISCOUNT_FRAMEWORK,true|$EVAL_cardType#THUKHER|THUKHAR,ESAAD|ESAAD'",
+          "2. readJsonPath('promoCard') → 'false'",
+          "3. getMappedValue('false', 'false|$EVAL_VAL_DISCOUNT_FRAMEWORK,true|$EVAL_cardType#THUKHER|THUKHAR,ESAAD|ESAAD')",
+          "4. '#' in mappedValues → split: primary='false|$EVAL_VAL_DISCOUNT_FRAMEWORK,true|$EVAL_cardType', tail='#THUKHER|THUKHAR,ESAAD|ESAAD'",
+          "5. Match 'false' → realValue = '$EVAL_VAL_DISCOUNT_FRAMEWORK'",
+          "6. Since last match is at index < total entries, tail is NOT appended",
+          "7. Back in doMapping: value starts with '$EVAL_' → strip → 'VAL_DISCOUNT_FRAMEWORK'",
+          "8. Recurse: 'VAL_' prefix → returns 'DISCOUNT_FRAMEWORK'"
+        ]
+      },
+      {
+        "id": 12,
+        "scenario": "Long conversion with pre-mapping",
+        "attribute_name": "accountId",
+        "processing_description": "Read accountId from JSON, apply mapping, convert to Long.",
+        "attribute_value_string": "$LONG_accountIdentifier$M_prepaid|1001,postpaid|2001",
+        "resolution_trace": [
+          "1. Pre-processing: '$M_' found → split: attributeValue='$LONG_accountIdentifier', mappedvalue='prepaid|1001,postpaid|2001'",
+          "2. Prefix '$LONG_' detected → remainder = 'accountIdentifier'",
+          "3. Recurse: readJsonPath('accountIdentifier') → 'postpaid'",
+          "4. getinternalMappedValue('prepaid|1001,postpaid|2001', 'postpaid') → '2001'",
+          "5. getValidLong('2001') → 2001L"
+        ]
+      },
+      {
+        "id": 13,
+        "scenario": "Current timestamp formatted",
+        "attribute_name": "createdDate",
+        "processing_description": "Get current date/time formatted as yyyy-MM-dd.",
+        "attribute_value_string": "$NOW_yyyy-MM-dd",
+        "resolution_trace": [
+          "1. Prefix '$NOW_' detected → format = 'yyyy-MM-dd'",
+          "2. Calendar.getInstance().getTime() → current Date",
+          "3. formatDateToString(date, 'yyyy-MM-dd', null) → '2026-07-01'"
+        ]
+      },
+      {
+        "id": 14,
+        "scenario": "String replacement on resolved value",
+        "attribute_name": "formattedName",
+        "processing_description": "Read customer name, replace spaces with underscores.",
+        "attribute_value_string": "$REPLACE(' ','_')customerName",
+        "resolution_trace": [
+          "1. extractAttributeMethod detects '$REPLACE' complex method",
+          "2. Remainder: 'customerName'",
+          "3. Recurse: readJsonPath → 'John Smith'",
+          "4. extractMethodParams → [' ', '_']",
+          "5. 'John Smith'.replace(' ', '_') → 'John_Smith'"
+        ]
+      },
+      {
+        "id": 15,
+        "scenario": "Full multi-pair ATTRIBUTE_VALUE for a mediation template",
+        "attribute_name": "productSpecAttribute_1",
+        "template_id": "POSTPAID_PSM_ADDON_RC_MT",
+        "processing_description": "Compound entry: static attribute name + dynamic value resolved from JSON with conditional mapping.",
+        "attribute_value_string": "attributeName=VAL_DataSpeed;attributeValue=$BYTE_allowances.dataAllowance.speed^allowances.dataAllowance.speedUOM;attributeAction=status#ACTIVE|Add,INACTIVE|Remove;",
+        "resolution_trace": [
+          "Pair 1: key='attributeName', expr='VAL_DataSpeed' → literal 'DataSpeed'",
+          "Pair 2: key='attributeValue', expr='$BYTE_allowances.dataAllowance.speed^allowances.dataAllowance.speedUOM' → byte conversion",
+          "Pair 3: key='attributeAction', expr='status#ACTIVE|Add,INACTIVE|Remove' → path 'status' with mapping ACTIVE→Add, INACTIVE→Remove"
+        ]
+      }
+    ]
+  },
+  "coverage_matrix": {
+    "source_file": "util.java",
+    "source_sha256": "347f57faad7336171e658e6b30ac6b4dd97526d6fb535a439bdcaa4e0edeb767",
+    "source_top_level_sections": [
+      "rulebook_metadata",
+      "mapping_logic",
+      "attribute_value_shapes",
+      "string_manipulation_rules",
+      "edge_cases_and_defaults",
+      "few_shot_examples",
+      "generation_guidelines_for_llm"
+    ],
+    "new_top_level_sections": [
+      "spec_header",
+      "runtime_model",
+      "storage_contracts",
+      "expression_grammar",
+      "delimiter_and_mapping_rules",
+      "runtime_edge_cases",
+      "advisor_generation_policy",
+      "compiler_examples",
+      "coverage_matrix"
+    ],
+    "section_mapping": {
+      "rulebook_metadata": "spec_header",
+      "mapping_logic.description": "runtime_model.overview",
+      "mapping_logic.prefix_dispatch_table": "expression_grammar.prefix_operations_by_family",
+      "mapping_logic.complex_method_dispatch": "expression_grammar.complex_function_calls",
+      "mapping_logic.fallback_json_path_resolution": "expression_grammar.fallback_source_path_resolution",
+      "mapping_logic.global_modifiers": "expression_grammar.global_expression_modifiers",
+      "mapping_logic.post_processing": "expression_grammar.post_resolution_cleanup",
+      "attribute_value_shapes": "storage_contracts",
+      "string_manipulation_rules": "delimiter_and_mapping_rules",
+      "edge_cases_and_defaults": "runtime_edge_cases",
+      "few_shot_examples": "compiler_examples.runtime_resolution_examples",
+      "generation_guidelines_for_llm": "advisor_generation_policy"
+    },
+    "counts": {
+      "prefix_rules": 32,
+      "complex_methods": 5,
+      "few_shot_examples": 15,
+      "storage_shape_examples_normal": 3,
+      "storage_shape_examples_container": 4,
+      "delimiter_roles": 7,
+      "edge_case_groups": 10
+    },
+    "covered_prefix_tokens": [
+      "VAL_",
+      "$SPACE_",
+      "$S_",
+      "$NUM_",
+      "$INT_",
+      "$STR_",
+      "$VATABLE_",
+      "$DEDUCTPER_",
+      "$CONCAT_",
+      "$LONG_",
+      "$FLOAT_",
+      "$DOU_",
+      "$SHO_",
+      "$DEC_",
+      "$BYTE_",
+      "$KBYTE_",
+      "$SEC_",
+      "$HOUR_",
+      "$ANYVALID_",
+      "$ANYVALIDVAL_",
+      "$ANYVALIDB_",
+      "$ANYTRUE_",
+      "$ALLTRUE_",
+      "$MAP_",
+      "$DATE_",
+      "$DATEFORMAT_",
+      "$FORMATDATE_",
+      "$NOW_",
+      "$BOOL_",
+      "$CAMEL_",
+      "$JSONPATH_",
+      "$JSONARRAY_"
+    ],
+    "covered_complex_methods": [
+      "$REPLACE",
+      "$LIST",
+      "$MATH",
+      "$INDEX",
+      "$XOR"
+    ],
+    "coverage_assertion": "All source rule categories were moved into the new schema. No prefix token, complex method, runtime example, storage-shape example, delimiter rule, edge-case group, fallback rule, global modifier, or post-processing rule was intentionally dropped."
+  }
+}

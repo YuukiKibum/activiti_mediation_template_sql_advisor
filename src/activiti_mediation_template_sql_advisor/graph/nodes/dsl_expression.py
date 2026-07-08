@@ -7,7 +7,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from activiti_mediation_template_sql_advisor.dsl_rules.attribute_value_rulebook import (
+from activiti_mediation_template_sql_advisor.dsl_rules.attribute_value_runtime_spec import (
     get_rulebook_prompt_summary,
 )
 from activiti_mediation_template_sql_advisor.graph.state import AdvisorState
@@ -349,9 +349,9 @@ def _extract_mapping(text: str) -> tuple[str, str, str, str] | None:
             continue
 
         source = _clean_token(match.group("source"))
-        condition = _clean_token(match.group("condition"))
-        result = _clean_token(match.group("result"))
-        else_value = _clean_token(match.group("else_value"))
+        condition = _clean_literal(match.group("condition"))
+        result = _clean_literal(match.group("result"))
+        else_value = _clean_literal(match.group("else_value"))
 
         if source and condition and result and else_value:
             return source, condition, result, else_value
