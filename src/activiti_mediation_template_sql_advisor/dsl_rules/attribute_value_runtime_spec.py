@@ -46,18 +46,11 @@ def load_attribute_value_runtime_spec() -> dict[str, Any]:
     return data
 
 
-def load_attribute_value_runtime_spec() -> dict[str, Any]:
-    """
-    Preferred new function name.
-    """
-    return load_attribute_value_runtime_spec()
-
-
 def _json_block(value: Any) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False)
 
 
-def get_rulebook_prompt_summary() -> str:
+def _build_rulebook_prompt_summary() -> str:
     """
     Backward-compatible public function name used by the DSL expression compiler.
 
@@ -146,3 +139,16 @@ Coverage:
 - Few-shot/runtime examples: {coverage.get("counts", {}).get("few_shot_examples")}
 - Storage shape examples: normal={coverage.get("counts", {}).get("storage_shape_examples_normal")}, container={coverage.get("counts", {}).get("storage_shape_examples_container")}
 """.strip()
+
+
+@lru_cache(maxsize=1)
+def get_rulebook_prompt_summary() -> str:
+    """
+    Cached prompt-safe summary from the ATTRIBUTE_VALUE runtime spec.
+    """
+    return _build_rulebook_prompt_summary()
+
+
+def warmup_rulebook_prompt_summary() -> str:
+    """Eagerly build the cached rulebook summary at application startup."""
+    return get_rulebook_prompt_summary()

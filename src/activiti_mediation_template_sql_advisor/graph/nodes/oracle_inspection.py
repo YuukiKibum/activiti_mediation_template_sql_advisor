@@ -4,8 +4,8 @@ import re
 from typing import Any
 
 from activiti_mediation_template_sql_advisor.graph.state import AdvisorState
-from activiti_mediation_template_sql_advisor.mcp_client.oracle_mcp_client import (
-    OracleMCPClient,
+from activiti_mediation_template_sql_advisor.mcp_client.shared_client import (
+    OracleMCPClientManager,
 )
 
 
@@ -327,166 +327,147 @@ async def oracle_inspection_node(state: AdvisorState) -> dict[str, Any]:
         }
 
     try:
-        async with OracleMCPClient() as client:
-            template_exists_response = await client.template_exists(template_id)
-            template_exists = _template_exists_from_response(template_exists_response)
-
-            template_row: dict[str, Any] | None = None
-
-            if template_exists:
-                template_row = await client.get_template(template_id)
-
-            parameter_row: dict[str, Any] | None = None
-
-            if attribute_name:
-                parameter_row = await client.get_parameter(
-                    template_id=template_id,
-                    attribute_name=attribute_name,
-                )
-
-            all_parameters: list[dict[str, Any]] = []
-
-            try:
-                all_parameters = await client.list_parameters_for_template(
-                    template_id=template_id,
-                    limit=100,
-                )
-            except Exception as sample_exc:
-                warnings.append(
-                    f"Could not fetch sample parameters for DSL pattern matching: {sample_exc}"
-                )
-
-            sample_parameters = _build_sample_parameters(
-                rows=all_parameters,
-                focus_attribute_name=attribute_name,
-            )
-
-            parameter_exists = parameter_row is not None
-
-            target_parameter_row: dict[str, Any] | None = None
-
-            if target_attribute_name:
-                target_parameter_row = await client.get_parameter(
-                    template_id=template_id,
-                    attribute_name=target_attribute_name,
-                )
-
-            target_parameter_exists = target_parameter_row is not None
-
-            param_id = str(
-                _get_any(
-                    parameter_row,
-                    "PARAM_ID",
-                    "param_id",
-                    "ID",
-                    "id",
-                    default="",
-                )
-                or ""
-            )
-
-            current_attribute_value = str(
-                _get_any(
-                    parameter_row,
-                    "ATTRIBUTE_VALUE",
-                    "attribute_value",
-                    "VALUE",
-                    "value",
-                    default="",
-                )
-                or ""
-            )
-
-            duplicate_append_key = False
-
-            if operation_type == "append_attribute_value":
-                duplicate_append_key = _append_key_exists_in_current_value(
-                    current_value=current_attribute_value,
-                    append_key=append_key,
-                )
-
-            if not template_exists:
-                errors.append(
-                    f"Template '{template_id}' does not exist in ACT_MEDIATION_TEMPLATE."
-                )
-
-            if operation_type in {
-                "append_attribute_value",
-                "update_attribute_value",
-                "rename_attribute",
-                "delete_attribute",
-            } and not parameter_exists:
-                errors.append(
-                    f"Attribute '{attribute_name}' does not exist for template '{template_id}' "
-                    "in ACT_MEDIATION_PARAMETER."
-                )
-
-            if operation_type == "add_attribute":
-                if parameter_exists:
-                    errors.append(
-                        f"Cannot add attribute '{attribute_name}' because it already exists "
-                        f"for template '{template_id}'."
-                    )
-                else:
-                    warnings.append(
-                        "Add attribute target does not currently exist. "
-                        "SQL generation is still blocked until safe PARAM_ID generation is available."
-                    )
-
-            if operation_type == "rename_attribute":
-                if not target_attribute_name:
-                    errors.append("Rename target new_attribute_name is missing.")
-
-                elif target_parameter_exists:
-                    errors.append(
-                        f"Cannot rename '{attribute_name}' to '{target_attribute_name}' because "
-                        f"'{target_attribute_name}' already exists for template '{template_id}'."
-                    )
-
-            if operation_type == "append_attribute_value":
-                if not append_key:
-                    errors.append("Append key is missing.")
-
-                elif duplicate_append_key:
-                    errors.append(
-                        f"Append key '{append_key}' already exists inside ATTRIBUTE_VALUE "
-                        f"for attribute '{attribute_name}'."
-                    )
-
-            can_generate_sql = not errors
-
-            oracle_result = {
-                "can_generate_sql": can_generate_sql,
-                "param_id": param_id,
+        inspection = await OracleMCPClientManager.call_tool(
+            "inspect_template_for_advisor",
+            {
                 "template_id": template_id,
                 "attribute_name": attribute_name,
-                "current_attribute_value": current_attribute_value,
-                "exists": parameter_exists,
-                "duplicate_append_key": duplicate_append_key,
-                "warnings": warnings,
-                "errors": errors,
-                "template_exists": template_exists,
-                "template_row": template_row or {},
-                "parameter_row": parameter_row or {},
                 "target_attribute_name": target_attribute_name,
-                "target_exists": target_parameter_exists,
-                "target_parameter_row": target_parameter_row or {},
-                "sample_parameters": sample_parameters,
-                "sample_parameter_count": len(sample_parameters),
-                "all_parameter_count": len(all_parameters),
-            }
+                "focus_attribute_name": attribute_name,
+                "sample_limit": 20,
+            },
+        )
 
-            updates: dict[str, Any] = {
-                "oracle": oracle_result,
-            }
+        template_exists = _template_exists_from_response(
+            inspection.get("template_exists", False)
+        )
+        template_row = inspection.get("template_row") or None
+        parameter_row = inspection.get("parameter_row") or None
+        target_parameter_row = inspection.get("target_parameter_row") or None
+        all_parameters = inspection.get("sample_parameters") or []
 
-            if warnings:
-                updates["warnings"] = list(state.get("warnings", []) or []) + warnings
+        sample_parameters = _build_sample_parameters(
+            rows=all_parameters,
+            focus_attribute_name=attribute_name,
+        )
 
-            if errors:
-                updates["errors"] = list(state.get("errors", []) or []) + errors
+        parameter_exists = parameter_row is not None
+        target_parameter_exists = target_parameter_row is not None
 
-            return updates
+        param_id = str(
+            _get_any(
+                parameter_row,
+                "PARAM_ID",
+                "param_id",
+                "ID",
+                "id",
+                default="",
+            )
+            or ""
+        )
+
+        current_attribute_value = str(
+            _get_any(
+                parameter_row,
+                "ATTRIBUTE_VALUE",
+                "attribute_value",
+                "VALUE",
+                "value",
+                default="",
+            )
+            or ""
+        )
+
+        duplicate_append_key = False
+
+        if operation_type == "append_attribute_value":
+            duplicate_append_key = _append_key_exists_in_current_value(
+                current_value=current_attribute_value,
+                append_key=append_key,
+            )
+
+        if not template_exists:
+            errors.append(
+                f"Template '{template_id}' does not exist in ACT_MEDIATION_TEMPLATE."
+            )
+
+        if operation_type in {
+            "append_attribute_value",
+            "update_attribute_value",
+            "rename_attribute",
+            "delete_attribute",
+        } and not parameter_exists:
+            errors.append(
+                f"Attribute '{attribute_name}' does not exist for template '{template_id}' "
+                "in ACT_MEDIATION_PARAMETER."
+            )
+
+        if operation_type == "add_attribute":
+            if parameter_exists:
+                errors.append(
+                    f"Cannot add attribute '{attribute_name}' because it already exists "
+                    f"for template '{template_id}'."
+                )
+            else:
+                warnings.append(
+                    "Add attribute target does not currently exist. "
+                    "SQL generation is still blocked until safe PARAM_ID generation is available."
+                )
+
+        if operation_type == "rename_attribute":
+            if not target_attribute_name:
+                errors.append("Rename target new_attribute_name is missing.")
+
+            elif target_parameter_exists:
+                errors.append(
+                    f"Cannot rename '{attribute_name}' to '{target_attribute_name}' because "
+                    f"'{target_attribute_name}' already exists for template '{template_id}'."
+                )
+
+        if operation_type == "append_attribute_value":
+            if not append_key:
+                errors.append("Append key is missing.")
+
+            elif duplicate_append_key:
+                errors.append(
+                    f"Append key '{append_key}' already exists inside ATTRIBUTE_VALUE "
+                    f"for attribute '{attribute_name}'."
+                )
+
+        can_generate_sql = not errors
+
+        oracle_result = {
+            "can_generate_sql": can_generate_sql,
+            "param_id": param_id,
+            "template_id": template_id,
+            "attribute_name": attribute_name,
+            "current_attribute_value": current_attribute_value,
+            "exists": parameter_exists,
+            "duplicate_append_key": duplicate_append_key,
+            "warnings": warnings,
+            "errors": errors,
+            "template_exists": template_exists,
+            "template_row": template_row or {},
+            "parameter_row": parameter_row or {},
+            "target_attribute_name": target_attribute_name,
+            "target_exists": target_parameter_exists,
+            "target_parameter_row": target_parameter_row or {},
+            "sample_parameters": sample_parameters,
+            "sample_parameter_count": len(sample_parameters),
+            "all_parameter_count": int(inspection.get("all_parameter_count", 0)),
+        }
+
+        updates: dict[str, Any] = {
+            "oracle": oracle_result,
+        }
+
+        if warnings:
+            updates["warnings"] = list(state.get("warnings", []) or []) + warnings
+
+        if errors:
+            updates["errors"] = list(state.get("errors", []) or []) + errors
+
+        return updates
 
     except Exception as exc:
         error = f"oracle_inspection_node failed while calling MCP: {exc}"

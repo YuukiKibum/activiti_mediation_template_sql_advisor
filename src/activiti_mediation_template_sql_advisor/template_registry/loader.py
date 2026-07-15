@@ -26,6 +26,7 @@ class TemplateRegistryEntry(BaseModel):
 
     template_id: str = Field(description="ACT_MEDIATION_TEMPLATE.TEMPLATE_ID")
     external_system: str = Field(description="External system name")
+    description: str = ""
     aliases: list[str] = Field(default_factory=list)
 
 
@@ -61,6 +62,9 @@ def load_template_registry(
 
     if raw_data is None:
         raise ValueError(f"Template registry file is empty: {registry_path}")
+
+    if "version" not in raw_data:
+        raw_data["version"] = 1
 
     return TemplateRegistry.model_validate(raw_data)
 

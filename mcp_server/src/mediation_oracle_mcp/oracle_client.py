@@ -1,5 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from typing import Any
 
 import oracledb
@@ -34,21 +36,42 @@ class OracleMediationRepository:
 
     def __init__(self, settings: OracleMCPSettings | None = None) -> None:
         self.settings = settings or get_settings()
+        self._pool: oracledb.ConnectionPool | None = None
+
+    def _get_pool(self) -> oracledb.ConnectionPool:
+        if self._pool is None:
+            self._pool = oracledb.create_pool(
+                user=self.settings.oracle_user,
+                password=self.settings.oracle_password,
+                dsn=self.settings.oracle_dsn,
+                min=1,
+                max=4,
+                increment=1,
+            )
+
+        return self._pool
+
+    def close(self) -> None:
+        if self._pool is not None:
+            self._pool.close()
+            self._pool = None
 
     def _connect(self) -> oracledb.Connection:
         """
-        Create a new Oracle connection.
-
-        For now, we open a connection per method call.
-        This is simple and good for learning/testing.
-
-        Later, if needed, we can improve this with connection pooling.
+        Borrow a pooled Oracle connection for one repository operation.
         """
-        return oracledb.connect(
-            user=self.settings.oracle_user,
-            password=self.settings.oracle_password,
-            dsn=self.settings.oracle_dsn,
-        )
+        return self._get_pool().acquire()
+
+    def _release(self, connection: oracledb.Connection) -> None:
+        self._get_pool().release(connection)
+
+    @contextmanager
+    def _borrow_connection(self):
+        connection = self._connect()
+        try:
+            yield connection
+        finally:
+            self._release(connection)
 
     @staticmethod
     def _convert_value(value: Any) -> Any:
@@ -114,7 +137,7 @@ class OracleMediationRepository:
             FROM ACT_MEDIATION_PARAMETER
         """
 
-        with self._connect() as connection:
+        with self._borrow_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(sql)
                 rows = self._rows_to_dicts(cursor)
@@ -136,7 +159,7 @@ class OracleMediationRepository:
             WHERE TEMPLATE_ID = :template_id
         """
 
-        with self._connect() as connection:
+        with self._borrow_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(sql, {"template_id": template_id})
                 count = cursor.fetchone()[0]
@@ -165,7 +188,7 @@ class OracleMediationRepository:
             WHERE TEMPLATE_ID = :template_id
         """
 
-        with self._connect() as connection:
+        with self._borrow_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(sql, {"template_id": template_id})
                 rows = self._rows_to_dicts(cursor)
@@ -199,7 +222,7 @@ class OracleMediationRepository:
             FETCH FIRST {safe_limit} ROWS ONLY
         """
 
-        with self._connect() as connection:
+        with self._borrow_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(sql, {"template_id": template_id})
                 return self._rows_to_dicts(cursor)
@@ -230,7 +253,7 @@ class OracleMediationRepository:
               AND ATTRIBUTE_NAME = :attribute_name
         """
 
-        with self._connect() as connection:
+        with self._borrow_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     sql,
@@ -269,7 +292,7 @@ class OracleMediationRepository:
             FETCH FIRST {safe_limit} ROWS ONLY
         """
 
-        with self._connect() as connection:
+        with self._borrow_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(sql, {"keyword": keyword})
                 return self._rows_to_dicts(cursor)
@@ -306,7 +329,168 @@ class OracleMediationRepository:
             FETCH FIRST {safe_limit} ROWS ONLY
         """
 
-        with self._connect() as connection:
+        with self._borrow_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(sql, {"keyword": keyword})
                 return self._rows_to_dicts(cursor)
+
+    def count_parameters_for_template(self, template_id: str) -> int:
+        template_id = normalize_template_id(template_id)
+
+        sql = """
+            SELECT COUNT(*) AS parameter_count
+            FROM ACT_MEDIATION_PARAMETER
+            WHERE TEMPLATE_ID = :template_id
+        """
+
+        with self._borrow_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(sql, {"template_id": template_id})
+                count = cursor.fetchone()[0]
+
+        return int(count)
+
+    def list_dsl_sample_parameters_for_template(
+        self,
+        template_id: str,
+        focus_attribute_name: str = "",
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """
+        Return a small set of parameter rows for DSL syntax hints.
+
+        Uses ATTRIBUTE_VALUE previews only (no full CLOB reads) so the advisor
+        can pattern-match cheaply while rollback still uses get_parameter().
+        """
+        template_id = normalize_template_id(template_id)
+        safe_limit = clamp_limit(limit, maximum=30)
+        bind_focus = (
+            clean_attribute_name(focus_attribute_name)
+            if focus_attribute_name
+            else None
+        )
+
+        sql = f"""
+            SELECT
+                PARAM_ID,
+                TEMPLATE_ID,
+                ATTRIBUTE_NAME,
+                CREATED_USER_ID,
+                MODIFIED_USER_ID,
+                CREATED_DATE,
+                MODIFIED_DATE,
+                DBMS_LOB.SUBSTR(ATTRIBUTE_VALUE, 800, 1) AS ATTRIBUTE_VALUE
+            FROM ACT_MEDIATION_PARAMETER
+            WHERE TEMPLATE_ID = :template_id
+            ORDER BY
+                CASE
+                    WHEN :focus_attribute_name IS NOT NULL
+                     AND ATTRIBUTE_NAME = :focus_attribute_name
+                    THEN 0
+                    ELSE 1
+                END,
+                CASE
+                    WHEN DBMS_LOB.SUBSTR(ATTRIBUTE_VALUE, 4000, 1) LIKE '%VAL_%'
+                      OR DBMS_LOB.SUBSTR(ATTRIBUTE_VALUE, 4000, 1) LIKE '%#%'
+                      OR DBMS_LOB.SUBSTR(ATTRIBUTE_VALUE, 4000, 1) LIKE '%|%'
+                      OR DBMS_LOB.SUBSTR(ATTRIBUTE_VALUE, 4000, 1) LIKE '%$%'
+                      OR DBMS_LOB.SUBSTR(ATTRIBUTE_VALUE, 4000, 1) LIKE '%;%'
+                    THEN 0
+                    ELSE 1
+                END,
+                ATTRIBUTE_NAME
+            FETCH FIRST {safe_limit} ROWS ONLY
+        """
+
+        with self._borrow_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql,
+                    {
+                        "template_id": template_id,
+                        "focus_attribute_name": bind_focus,
+                    },
+                )
+                return self._rows_to_dicts(cursor)
+
+    def inspect_template_for_advisor(
+        self,
+        template_id: str,
+        attribute_name: str = "",
+        target_attribute_name: str = "",
+        focus_attribute_name: str = "",
+        sample_limit: int = 20,
+    ) -> dict[str, Any]:
+        """
+        Fetch advisor inspection context in parallel using the connection pool.
+
+        Full ATTRIBUTE_VALUE is returned only for target parameter rows needed
+        for rollback SQL. DSL sample rows use preview-only values.
+        """
+        template_id = normalize_template_id(template_id)
+        attribute_name = clean_attribute_name(attribute_name) if attribute_name else ""
+        target_attribute_name = (
+            clean_attribute_name(target_attribute_name)
+            if target_attribute_name
+            else ""
+        )
+        focus_attribute_name = (
+            clean_attribute_name(focus_attribute_name)
+            if focus_attribute_name
+            else attribute_name
+        )
+
+        tasks: dict[str, Any] = {
+            "template_row": lambda: self.get_template(template_id),
+            "sample_parameters": lambda: self.list_dsl_sample_parameters_for_template(
+                template_id=template_id,
+                focus_attribute_name=focus_attribute_name,
+                limit=sample_limit,
+            ),
+            "parameter_count": lambda: self.count_parameters_for_template(template_id),
+        }
+
+        if attribute_name:
+            tasks["parameter_row"] = lambda: self.get_parameter(
+                template_id,
+                attribute_name,
+            )
+
+        if target_attribute_name and target_attribute_name != attribute_name:
+            tasks["target_parameter_row"] = lambda: self.get_parameter(
+                template_id,
+                target_attribute_name,
+            )
+
+        results: dict[str, Any] = {}
+
+        with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+            futures = {
+                executor.submit(task): key
+                for key, task in tasks.items()
+            }
+
+            for future in futures:
+                key = futures[future]
+                results[key] = future.result()
+
+        template_row = results.get("template_row")
+        parameter_row = results.get("parameter_row")
+        target_parameter_row = results.get("target_parameter_row")
+
+        if (
+            target_attribute_name
+            and target_attribute_name == attribute_name
+            and parameter_row is not None
+        ):
+            target_parameter_row = parameter_row
+
+        return {
+            "template_id": template_id,
+            "template_exists": template_row is not None,
+            "template_row": template_row,
+            "parameter_row": parameter_row,
+            "target_parameter_row": target_parameter_row,
+            "sample_parameters": results.get("sample_parameters", []),
+            "all_parameter_count": int(results.get("parameter_count", 0)),
+        }

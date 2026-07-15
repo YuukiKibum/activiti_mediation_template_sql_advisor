@@ -1,22 +1,30 @@
 from __future__ import annotations
 
-import json
-
 import pytest
 
-from activiti_mediation_template_sql_advisor.graph.nodes import dsl_expression
+from activiti_mediation_template_sql_advisor.dsl_rules.attribute_value_runtime_spec import (
+    get_rulebook_prompt_summary,
+    load_attribute_value_runtime_spec,
+)
+from activiti_mediation_template_sql_advisor.dsl_compiler.node import dsl_expression_node
 
 
-def _base_state(requirement: str, operation_type: str = "add_attribute") -> dict:
+def _base_state(
+    requirement: str,
+    operation_type: str = "add_attribute",
+    *,
+    attribute_name: str = "TestAttribute",
+    rhs_request: str | None = None,
+) -> dict:
     return {
         "user_requirement": requirement,
         "plan": {
             "operation_type": operation_type,
-            "attribute_name": "TestAttribute",
-            "new_attribute_name": "TestAttribute",
+            "attribute_name": attribute_name,
+            "new_attribute_name": attribute_name,
             "container_attribute_name": "",
             "append_key": "",
-            "rhs_request": requirement,
+            "rhs_request": rhs_request if rhs_request is not None else requirement,
         },
         "template": {
             "template_id": "MT_TEST_TEMPLATE",
@@ -31,115 +39,89 @@ def _base_state(requirement: str, operation_type: str = "add_attribute") -> dict
     }
 
 
-def test_dsl_expression_fixed_literal(monkeypatch):
-    def fake_answer(query: str, evaluator: str = "") -> str:
-        return json.dumps(
-            {
-                "evaluator": "A",
-                "selected_record_ids": ["A-VAL_"],
-                "operation_kind": "fixed_literal",
-                "is_supported": True,
-                "expression": "VAL_123",
-                "reason": "Fixed literal value.",
-                "confidence": 1.0,
-            }
-        )
+@pytest.fixture(autouse=True)
+def skip_expression_evaluator_llm(monkeypatch):
+    """Unit tests assert deterministic compiler output without a second LLM pass."""
 
-    monkeypatch.setattr(dsl_expression, "answer", fake_answer)
+    def _passthrough_evaluator(*, state, structured_answer):
+        return structured_answer, "", [], []
 
-    state = _base_state(
-        "For prepaid base plan rtf template, add a new attribute gundu with value 123"
+    monkeypatch.setattr(
+        "activiti_mediation_template_sql_advisor.dsl_compiler.node.evaluate_compiled_expression",
+        _passthrough_evaluator,
     )
 
-    result = dsl_expression.dsl_expression_node(state)
+
+def test_load_attribute_value_runtime_spec():
+    spec = load_attribute_value_runtime_spec()
+
+    assert isinstance(spec, dict)
+    assert "spec_header" in spec
+    assert "expression_grammar" in spec
+
+
+def test_get_rulebook_prompt_summary():
+    summary = get_rulebook_prompt_summary()
+
+    assert "ATTRIBUTE_VALUE RUNTIME SPEC SUMMARY" in summary
+    assert "VAL_" in summary
+
+
+def test_dsl_expression_fixed_literal():
+    state = _base_state(
+        "For prepaid base plan rtf template, add a new attribute gundu with value 123",
+        rhs_request="123",
+    )
+
+    result = dsl_expression_node(state)
     expression = result["expression"]
 
     assert expression["did_compile"] is True
     assert expression["compiled_rhs"] == "VAL_123"
-    assert expression["selected_evaluator"] == "A"
-    assert expression["selected_record_id"] == "A-VAL_"
+    assert expression["selected_evaluator"] == "RULEBOOK"
+    assert expression["operation_kind"] == "fixed_literal"
+    assert expression["dsl_query"] == "RULEBOOK_DETERMINISTIC_COMPILER"
     assert expression["errors"] == []
 
 
-def test_dsl_expression_mapping(monkeypatch):
-    def fake_answer(query: str, evaluator: str = "") -> str:
-        return json.dumps(
-            {
-                "evaluator": "B",
-                "selected_record_ids": ["MAP-general", "NUANCE-dollar-dot-prefix"],
-                "operation_kind": "mapping",
-                "is_supported": True,
-                "expression": "addToBill#false|false,ELSE|true",
-                "reason": "Conditional mapping.",
-                "confidence": 0.95,
-            }
-        )
-
-    monkeypatch.setattr(dsl_expression, "answer", fake_answer)
-
+def test_dsl_expression_mapping():
     state = _base_state(
         "For Prepaid Base Plan RTF request, add a new attribute AddToBillFlagCopy. "
-        "If addToBill is false set false, otherwise true."
+        "If addToBill is false set false, otherwise true.",
+        rhs_request="If addToBill is false set false, otherwise true.",
     )
 
-    result = dsl_expression.dsl_expression_node(state)
+    result = dsl_expression_node(state)
     expression = result["expression"]
 
     assert expression["did_compile"] is True
     assert expression["compiled_rhs"] == "addToBill#false|false,ELSE|true"
-    assert expression["selected_evaluator"] == "B"
+    assert expression["selected_evaluator"] == "RULEBOOK"
     assert expression["operation_kind"] == "mapping"
     assert expression["errors"] == []
 
 
-def test_dsl_expression_unsupported(monkeypatch):
-    def fake_answer(query: str, evaluator: str = "") -> str:
-        return json.dumps(
-            {
-                "evaluator": "B",
-                "selected_record_ids": ["UNSUPPORTED-time-conversion"],
-                "operation_kind": "unsupported",
-                "is_supported": False,
-                "expression": "",
-                "reason": "Seconds to minutes conversion is not supported by the KB.",
-                "confidence": 1.0,
-            }
-        )
-
-    monkeypatch.setattr(dsl_expression, "answer", fake_answer)
-
+def test_dsl_expression_unsupported_source_field_without_path():
     state = _base_state(
-        "For Prepaid Base Plan RTF request, update Duration by converting seconds to minutes.",
+        "Duration should use dto field",
         operation_type="update_attribute_value",
+        attribute_name="Duration",
+        rhs_request="",
     )
 
-    result = dsl_expression.dsl_expression_node(state)
+    result = dsl_expression_node(state)
     expression = result["expression"]
 
     assert expression["did_compile"] is False
     assert expression["compiled_rhs"] == ""
     assert expression["is_supported"] is False
+    assert expression["operation_kind"] == "unsupported"
     assert expression["errors"] == [
-        "Seconds to minutes conversion is not supported by the KB."
+        "DTO/source field language was present, but a valid field path could not be identified."
     ]
 
 
-def test_dsl_expression_append_subkey(monkeypatch):
-    def fake_answer(query: str, evaluator: str = "") -> str:
-        return json.dumps(
-            {
-                "evaluator": "B",
-                "selected_record_ids": ["MAP-general"],
-                "operation_kind": "append_subkey",
-                "is_supported": True,
-                "expression": "subscriberType#PREPAID|1,ELSE|0",
-                "reason": "Append sub-key value mapping.",
-                "confidence": 0.9,
-            }
-        )
-
-    monkeypatch.setattr(dsl_expression, "answer", fake_answer)
-
+def test_dsl_expression_append_subkey():
     state = {
         "user_requirement": (
             "For Prepaid Base Plan ECM request, add CustomerType with value "
@@ -165,11 +147,12 @@ def test_dsl_expression_append_subkey(monkeypatch):
         "errors": [],
     }
 
-    result = dsl_expression.dsl_expression_node(state)
+    result = dsl_expression_node(state)
     expression = result["expression"]
 
     assert expression["did_compile"] is True
     assert expression["compiled_rhs"] == "subscriberType#PREPAID|1,ELSE|0"
     assert expression["append_fragment"] == "CustomerType=subscriberType#PREPAID|1,ELSE|0;"
     assert expression["operation_kind"] == "append_subkey"
+    assert expression["selected_evaluator"] == "RULEBOOK"
     assert expression["errors"] == []

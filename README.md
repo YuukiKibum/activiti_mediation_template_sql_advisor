@@ -165,23 +165,22 @@ Key guardrails:
 │   │   └── attribute_value_runtime_spec.json
 │   └── template_registry/
 │       └── template_registry.yaml
+├── eval/
+│   ├── golden_cases.jsonl
+│   └── runtime_spec_compile_cases.jsonl
 ├── src/
 │   └── activiti_mediation_template_sql_advisor/
+│       ├── dsl_compiler/
+│       ├── dsl_rules/
 │       ├── graph/
 │       │   ├── builder.py
 │       │   ├── state.py
+│       │   ├── telemetry.py
 │       │   └── nodes/
-│       │       ├── request_planner.py
-│       │       ├── template_resolution.py
-│       │       ├── oracle_inspection.py
-│       │       ├── dsl_expression.py
-│       │       ├── sql_generation.py
-│       │       └── final_response.py
-│       ├── dsl_rules/
-│       │   └── attribute_value_rulebook.py
 │       ├── mcp_client/
-│       │   └── oracle_mcp_client.py
+│       ├── template_registry/
 │       └── web_app.py
+├── tests/
 ├── pyproject.toml
 └── README.md
 ```

@@ -141,3 +141,25 @@ def register_tools(mcp: FastMCP) -> None:
             keyword=keyword,
             limit=limit,
         )
+
+    @mcp.tool()
+    def inspect_template_for_advisor(
+        template_id: str,
+        attribute_name: str = "",
+        target_attribute_name: str = "",
+        focus_attribute_name: str = "",
+        sample_limit: int = 20,
+    ) -> dict[str, Any]:
+        """
+        Fetch advisor inspection context in one pooled, parallelized read.
+
+        Returns template metadata, full target parameter rows for rollback,
+        and preview-only DSL sample rows.
+        """
+        return repo.inspect_template_for_advisor(
+            template_id=template_id,
+            attribute_name=attribute_name,
+            target_attribute_name=target_attribute_name,
+            focus_attribute_name=focus_attribute_name,
+            sample_limit=sample_limit,
+        )

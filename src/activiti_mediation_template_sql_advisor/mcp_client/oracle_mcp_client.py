@@ -251,6 +251,28 @@ class OracleMCPClient:
             },
         )
 
+    async def inspect_template_for_advisor(
+        self,
+        template_id: str,
+        attribute_name: str = "",
+        target_attribute_name: str = "",
+        focus_attribute_name: str = "",
+        sample_limit: int = 20,
+    ) -> dict[str, Any]:
+        """
+        Fetch advisor inspection context in one MCP round-trip.
+        """
+        return await self._call_tool(
+            "inspect_template_for_advisor",
+            arguments={
+                "template_id": template_id,
+                "attribute_name": attribute_name,
+                "target_attribute_name": target_attribute_name,
+                "focus_attribute_name": focus_attribute_name,
+                "sample_limit": sample_limit,
+            },
+        )
+
 
 async def main() -> None:
     """

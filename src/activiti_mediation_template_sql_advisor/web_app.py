@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI
@@ -5,11 +6,25 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from activiti_mediation_template_sql_advisor.graph.builder import run_advisor
+from activiti_mediation_template_sql_advisor.startup import (
+    shutdown_application,
+    warmup_application,
+)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await warmup_application()
+    try:
+        yield
+    finally:
+        await shutdown_application()
 
 
 app = FastAPI(
     title="Activiti Mediation Template SQL Advisor",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 
@@ -116,10 +131,6 @@ async def advisor(request: AdvisorRequest) -> dict[str, Any]:
         else None,
 
         "oracle": oracle,
-
-        # RAG sources
-        # New DSL RAG currently returns selected record/reason, not old rag_context list.
-        "rag_sources": [],
 
         # SQL
         "generated_sql": [recommended_sql] if recommended_sql else [],
@@ -581,15 +592,14 @@ HTML_PAGE = """
             <h1>Activiti Mediation Template SQL Advisor</h1>
             <p>
                 Converts natural-language mediation template changes into safe advisory SQL,
-                using template registry resolution, RAG documentation, expression compilation,
+                using template registry resolution, runtime-spec expression compilation,
                 Oracle inspection through MCP, deterministic SQL generation, and rollback SQL.
             </p>
 
             <div class="status-row">
                 <span class="status-pill">LangGraph Workflow</span>
                 <span class="status-pill">Template Registry</span>
-                <span class="status-pill">Expression Compiler</span>
-                <span class="status-pill">Pinecone RAG</span>
+                <span class="status-pill">Runtime Spec Compiler</span>
                 <span class="status-pill">Oracle MCP Inspection</span>
                 <span class="status-pill">Rollback SQL</span>
             </div>
@@ -613,7 +623,7 @@ HTML_PAGE = """
 
                 <div id="loading" class="loading">
                     <span class="spinner"></span>
-                    Running planner, template registry resolver, RAG retrieval,
+                    Running planner, template registry resolver,
                     expression compiler, Oracle MCP inspection, and SQL generator...
                 </div>
 
@@ -655,7 +665,7 @@ HTML_PAGE = """
                     <p>
                         Submit a requirement to see planner output, template resolution,
                         expression compilation, Oracle inspection, generated SQL,
-                        rollback SQL, warnings, and RAG sources.
+                        rollback SQL, and warnings.
                     </p>
                 </div>
             </section>
@@ -682,7 +692,7 @@ HTML_PAGE = """
                     <p>
                         Submit a requirement to see planner output, template resolution,
                         expression compilation, Oracle inspection, generated SQL,
-                        rollback SQL, warnings, and RAG sources.
+                        rollback SQL, and warnings.
                     </p>
                 </div>
             `;
@@ -736,28 +746,6 @@ HTML_PAGE = """
                     </div>
                 </div>
             `;
-        }
-
-        function renderSources(sources) {
-            if (!sources || sources.length === 0) {
-                return `
-                    <div class="source-item">
-                        <div class="source-title">No RAG sources retrieved</div>
-                    </div>
-                `;
-            }
-
-            return sources.map(source => `
-                <div class="source-item">
-                    <div class="source-title">
-                        ${escapeHtml(source.source)}
-                        ${source.score !== null && source.score !== undefined
-                            ? `<span class="badge blue">score ${escapeHtml(source.score)}</span>`
-                            : ""}
-                    </div>
-                    <div class="source-preview">${escapeHtml(source.content_preview)}</div>
-                </div>
-            `).join("");
         }
 
         function renderCurrentOracleConfig(data) {
@@ -922,13 +910,6 @@ HTML_PAGE = """
                 </div>
 
                 ${renderMessages("Warnings", data.warnings, "warning")}
-
-                <div class="card">
-                    <h2>RAG Documentation Sources</h2>
-                    <div class="source-list">
-                        ${renderSources(data.rag_sources)}
-                    </div>
-                </div>
             `;
         }
 

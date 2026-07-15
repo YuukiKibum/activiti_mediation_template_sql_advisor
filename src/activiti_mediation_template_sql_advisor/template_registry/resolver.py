@@ -1,4 +1,5 @@
-import re
+from __future__ import annotations
+
 from difflib import SequenceMatcher
 from typing import Literal
 
@@ -13,15 +14,18 @@ from activiti_mediation_template_sql_advisor.template_registry.loader import (
 MatchType = Literal[
     "template_id_exact",
     "alias_exact",
+    "planner_phrase_exact",
     "alias_fuzzy",
+    "fuzzy",
     "not_found",
+    "error",
 ]
+
+DEFAULT_MINIMUM_FUZZY_SCORE = 0.88
 
 
 class TemplateResolutionResult(BaseModel):
-    """
-    Result of resolving a user/business phrase into a TEMPLATE_ID.
-    """
+    """Result of resolving a user/business phrase into a TEMPLATE_ID."""
 
     template_id: str = ""
     external_system: str = ""
@@ -29,100 +33,93 @@ class TemplateResolutionResult(BaseModel):
     match_type: MatchType = "not_found"
     score: float = 0.0
     reason: str = ""
+    is_resolved: bool = False
+
+    def to_graph_dict(self) -> dict[str, object]:
+        return self.model_dump()
 
 
-def normalize_text(value: str) -> str:
-    """
-    Normalize text for matching.
-
-    Example:
-        "Prepaid Base Plan ECM request"
-        -> "PREPAID BASE PLAN ECM REQUEST"
-    """
-    value = value or ""
-    value = value.upper()
-    value = re.sub(r"[^A-Z0-9_]+", " ", value)
-    value = re.sub(r"\s+", " ", value)
-    return value.strip()
+def _normalize(value: str) -> str:
+    return " ".join((value or "").lower().split())
 
 
-def _token_score(user_text: str, candidate_text: str) -> float:
-    """
-    Calculate how many important candidate words appear in the user text.
-
-    Example:
-        user_text:
-            FOR PREPAID BASE PLAN ECM REQUEST RENAME POATTRIBUTES
-
-        candidate_text:
-            PREPAID BASE PLAN ECM REQUEST
-
-        score:
-            1.0
-    """
-    user_tokens = set(normalize_text(user_text).replace("_", " ").split())
-    candidate_tokens = set(normalize_text(candidate_text).replace("_", " ").split())
-
-    if not candidate_tokens:
-        return 0.0
-
-    matched_tokens = user_tokens.intersection(candidate_tokens)
-
-    return len(matched_tokens) / len(candidate_tokens)
+def _ratio(left: str, right: str) -> float:
+    return SequenceMatcher(None, _normalize(left), _normalize(right)).ratio()
 
 
-def _sequence_score(user_text: str, candidate_text: str) -> float:
-    """
-    Calculate rough text similarity using Python's built-in difflib.
-    """
-    normalized_user_text = normalize_text(user_text)
-    normalized_candidate_text = normalize_text(candidate_text)
+def _entry_aliases(entry: TemplateRegistryEntry) -> list[str]:
+    aliases: list[str] = []
 
-    if not normalized_user_text or not normalized_candidate_text:
-        return 0.0
+    if entry.description:
+        aliases.append(entry.description)
 
-    return SequenceMatcher(
-        None,
-        normalized_user_text,
-        normalized_candidate_text,
-    ).ratio()
+    aliases.extend(entry.aliases)
+
+    if entry.template_id:
+        aliases.append(entry.template_id)
+
+    seen: set[str] = set()
+    unique_aliases: list[str] = []
+
+    for alias in aliases:
+        clean = " ".join(str(alias).split())
+        if not clean:
+            continue
+
+        key = clean.lower()
+        if key in seen:
+            continue
+
+        seen.add(key)
+        unique_aliases.append(clean)
+
+    return unique_aliases
 
 
-def _candidate_score(user_text: str, candidate_text: str) -> float:
-    """
-    Combine token matching and sequence matching.
+def _external_system_matches(
+    requested_external_system: str,
+    record_external_system: str,
+) -> bool:
+    if not requested_external_system:
+        return True
 
-    Token matching is more important for our use case because user requirements
-    usually contain extra words like rename, add, change, attribute, etc.
-    """
-    token_score = _token_score(user_text, candidate_text)
-    sequence_score = _sequence_score(user_text, candidate_text)
+    if not record_external_system:
+        return True
 
-    return (token_score * 0.75) + (sequence_score * 0.25)
+    return (
+        requested_external_system.strip().lower()
+        == record_external_system.strip().lower()
+    )
 
 
-def _template_id_appears_in_text(user_text: str, template_id: str) -> bool:
-    """
-    Check if an exact TEMPLATE_ID appears in the user requirement.
-
-    We use upper-case comparison because TEMPLATE_ID values are case-insensitive
-    in normal user input, but stored as uppercase in Oracle.
-    """
-    normalized_user_text = normalize_text(user_text)
-    normalized_template_id = normalize_text(template_id)
-
+def _template_id_in_text(user_text: str, template_id: str) -> bool:
+    normalized_user_text = _normalize(user_text)
+    normalized_template_id = _normalize(template_id)
     return normalized_template_id in normalized_user_text
 
 
-def _resolve_by_exact_template_id(
-    user_text: str,
-    entries: list[TemplateRegistryEntry],
-) -> TemplateResolutionResult | None:
+def resolve_template_from_plan(
+    *,
+    user_requirement: str,
+    template_phrase: str = "",
+    external_system: str = "",
+    minimum_fuzzy_score: float = DEFAULT_MINIMUM_FUZZY_SCORE,
+) -> TemplateResolutionResult:
     """
-    Resolve when the user directly typed a real TEMPLATE_ID.
+    Resolve planner context into a TEMPLATE_ID using the cached typed registry.
+
+    Matching order:
+        1. Exact TEMPLATE_ID in user text
+        2. Exact alias contained in user requirement
+        3. Exact planner phrase equals alias
+        4. Fuzzy alias match above threshold
     """
-    for entry in entries:
-        if _template_id_appears_in_text(user_text, entry.template_id):
+    registry = get_template_registry()
+    user_text = _normalize(user_requirement)
+    phrase_text = _normalize(template_phrase)
+
+    for entry in registry.templates:
+        if _template_id_in_text(user_requirement, entry.template_id):
             return TemplateResolutionResult(
                 template_id=entry.template_id,
                 external_system=entry.external_system,
@@ -130,25 +127,16 @@ def _resolve_by_exact_template_id(
                 match_type="template_id_exact",
                 score=1.0,
                 reason="Exact TEMPLATE_ID found in user requirement.",
+                is_resolved=True,
             )
 
-    return None
+    for entry in registry.templates:
+        if not _external_system_matches(external_system, entry.external_system):
+            continue
 
-
-def _resolve_by_exact_alias(
-    user_text: str,
-    entries: list[TemplateRegistryEntry],
-) -> TemplateResolutionResult | None:
-    """
-    Resolve when a configured alias appears in the user requirement.
-    """
-    normalized_user_text = normalize_text(user_text)
-
-    for entry in entries:
-        for alias in entry.aliases:
-            normalized_alias = normalize_text(alias)
-
-            if normalized_alias and normalized_alias in normalized_user_text:
+        for alias in _entry_aliases(entry):
+            alias_norm = _normalize(alias)
+            if alias_norm and alias_norm in user_text:
                 return TemplateResolutionResult(
                     template_id=entry.template_id,
                     external_system=entry.external_system,
@@ -156,106 +144,71 @@ def _resolve_by_exact_alias(
                     match_type="alias_exact",
                     score=1.0,
                     reason="Exact configured alias found in user requirement.",
+                    is_resolved=True,
                 )
 
-    return None
+    for entry in registry.templates:
+        if not _external_system_matches(external_system, entry.external_system):
+            continue
 
+        for alias in _entry_aliases(entry):
+            alias_norm = _normalize(alias)
+            if phrase_text and phrase_text == alias_norm:
+                return TemplateResolutionResult(
+                    template_id=entry.template_id,
+                    external_system=entry.external_system,
+                    matched_text=alias,
+                    match_type="planner_phrase_exact",
+                    score=1.0,
+                    reason="Planner template phrase exactly matched configured alias.",
+                    is_resolved=True,
+                )
 
-def _resolve_by_fuzzy_alias(
-    user_text: str,
-    entries: list[TemplateRegistryEntry],
-    minimum_score: float,
-) -> TemplateResolutionResult | None:
-    """
-    Resolve using fuzzy alias matching.
-
-    This helps when the user says something close to an alias, but not exactly.
-    """
     best_entry: TemplateRegistryEntry | None = None
-    best_alias = ""
     best_score = 0.0
+    best_alias = ""
 
-    for entry in entries:
-        candidates = [entry.template_id, *entry.aliases]
+    for entry in registry.templates:
+        if not _external_system_matches(external_system, entry.external_system):
+            continue
 
-        for candidate in candidates:
-            score = _candidate_score(user_text, candidate)
+        for alias in _entry_aliases(entry):
+            alias_norm = _normalize(alias)
+            if not alias_norm:
+                continue
+
+            score = 0.0
+            if phrase_text:
+                score = max(score, _ratio(phrase_text, alias_norm))
+            score = max(score, _ratio(user_text, alias_norm))
 
             if score > best_score:
                 best_score = score
                 best_entry = entry
-                best_alias = candidate
+                best_alias = alias
 
-    if best_entry is None or best_score < minimum_score:
-        return None
+    if best_entry and best_score >= minimum_fuzzy_score:
+        return TemplateResolutionResult(
+            template_id=best_entry.template_id,
+            external_system=best_entry.external_system,
+            matched_text=best_alias,
+            match_type="fuzzy",
+            score=round(best_score, 4),
+            reason="Best fuzzy registry alias match.",
+            is_resolved=True,
+        )
 
     return TemplateResolutionResult(
-        template_id=best_entry.template_id,
-        external_system=best_entry.external_system,
+        template_id="",
+        external_system=external_system or "",
+        match_type="not_found",
         matched_text=best_alias,
-        match_type="alias_fuzzy",
         score=round(best_score, 4),
         reason=(
-            "Best fuzzy match from template registry. "
-            "Oracle inspection should still confirm the template exists."
+            f"No template registry match reached threshold {minimum_fuzzy_score}. "
+            f"Best candidate was '{best_alias}' with score {best_score:.4f}."
+            if best_alias
+            else "No template registry aliases were matched."
         ),
+        is_resolved=False,
     )
-
-
-def resolve_template(
-    user_text: str,
-    minimum_fuzzy_score: float = 0.82,
-) -> TemplateResolutionResult:
-    """
-    Resolve user/business text into a TEMPLATE_ID.
-
-    Matching order:
-        1. Exact TEMPLATE_ID
-        2. Exact alias
-        3. Fuzzy alias/template match
-        4. Not found
-    """
-    registry = get_template_registry()
-    entries = registry.templates
-
-    exact_template_id_result = _resolve_by_exact_template_id(user_text, entries)
-    if exact_template_id_result is not None:
-        return exact_template_id_result
-
-    exact_alias_result = _resolve_by_exact_alias(user_text, entries)
-    if exact_alias_result is not None:
-        return exact_alias_result
-
-    fuzzy_result = _resolve_by_fuzzy_alias(
-        user_text=user_text,
-        entries=entries,
-        minimum_score=minimum_fuzzy_score,
-    )
-    if fuzzy_result is not None:
-        return fuzzy_result
-
-    return TemplateResolutionResult(
-        match_type="not_found",
-        score=0.0,
-        reason=(
-            "No TEMPLATE_ID or configured alias could be resolved from the "
-            "user requirement."
-        ),
-    )
-
-
-if __name__ == "__main__":
-    examples = [
-        "Rename poAttributes to poAttributeList for MT_ECM_PRE_BASEPLAN",
-        "For Prepaid Base Plan ECM request, rename existing attribute poAttributes to poAttributeList.",
-        "For Prepaid STK Notify Store request, change POType from Add-on to Base Plan.",
-        "For Prepaid IN Group Offer, set ThirdPartySub_Category so third party subscription enabled true maps to 1 and false maps to 0 as a long value.",
-        "For Prepaid Base Plan XYZ request, add AddToBillFlagCopy.",
-    ]
-
-    for example in examples:
-        result = resolve_template(example)
-
-        print("=" * 100)
-        print("Input:", example)
-        print("Result:", result.model_dump())
